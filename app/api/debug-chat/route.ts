@@ -41,12 +41,16 @@ export async function POST(request: NextRequest) {
       response: data,
     })
   } catch (error) {
-    console.error("Debug Chat API Error:", error)
+    console.error("Debug Chat API Error:", error);
+    let errorMessage = 'Unknown error';
+  if (error instanceof Error) {
+    errorMessage = error.message;
+  }
     return NextResponse.json(
       {
         success: false,
         error: "Internal server error",
-        details: error,
+        details: errorMessage,
       },
       { status: 500 },
     )

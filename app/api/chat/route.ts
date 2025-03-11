@@ -77,7 +77,7 @@ export async function POST(request: NextRequest) {
       history: history,
     })
 
-    // Create a streaming response
+    // Create a non-streaming request to Eden AI
     const response = await fetch("https://api.edenai.run/v2/text/chat", {
       method: "POST",
       headers: {
@@ -93,7 +93,7 @@ export async function POST(request: NextRequest) {
         temperature: 0.7,
         max_tokens: 500,
         fallback_providers: "",
-        stream: true,
+        stream: false, // Set to false for non-streaming response
       }),
     })
 
@@ -103,91 +103,22 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Error from Eden AI API" }, { status: response.status })
     }
 
-    // Create a ReadableStream that will be returned to the client
-    const encoder = new TextEncoder()
-    const decoder = new TextDecoder()
+    // Parse the response from Eden AI
+    const data = await response.json()
+    console.log("Eden AI response:", data)
 
-    const stream = new ReadableStream({
-      async start(controller) {
-        // Function to read from the response body stream
-        const reader = response.body?.getReader()
-        if (!reader) {
-          controller.error("No response body")
-          return
-        }
-
-        try {
-          // Send an initial empty message to start the stream
-          controller.enqueue(encoder.encode(`data: ${JSON.stringify({ choices: [{ delta: { content: "" } }] })}\n\n`))
-
-          let buffer = ""
-
-          while (true) {
-            const { done, value } = await reader.read()
-
-            if (done) {
-              // Send a final [DONE] message to signal completion
-              controller.enqueue(encoder.encode("data: [DONE]\n\n"))
-              break
-            }
-
-            // Decode the chunk and add it to our buffer
-            const chunk = decoder.decode(value, { stream: true })
-            buffer += chunk
-
-            // Process any complete messages in the buffer
-            let processedBuffer = ""
-            const lines = buffer.split("\n")
-
-            for (let i = 0; i < lines.length; i++) {
-              const line = lines[i]
-
-              if (line.startsWith("data:")) {
-                try {
-                  const jsonStr = line.replace(/^data: /, "").trim()
-
-                  if (jsonStr === "[DONE]") {
-                    continue // Skip Eden AI's DONE message, we'll send our own
-                  }
-
-                  const data = JSON.parse(jsonStr)
-
-                  if (data.openai && data.openai.generated_text) {
-                    // Format for AI SDK compatibility
-                    const aiSdkFormat = JSON.stringify({
-                      choices: [{ delta: { content: data.openai.generated_text } }],
-                    })
-
-                    controller.enqueue(encoder.encode(`data: ${aiSdkFormat}\n\n`))
-                    console.log("Sending chunk:", data.openai.generated_text)
-                  }
-                } catch (e) {
-                  console.error("Error parsing JSON:", e, line)
-                }
-              } else {
-                processedBuffer += line + (i < lines.length - 1 ? "\n" : "")
-              }
-            }
-
-            buffer = processedBuffer
-          }
-
-          // Close the stream
-          controller.close()
-        } catch (e) {
-          console.error("Error processing stream:", e)
-          controller.error(e)
-        }
-      },
-    })
-
-    return new Response(stream, {
-      headers: {
-        "Content-Type": "text/event-stream",
-        "Cache-Control": "no-cache",
-        Connection: "keep-alive",
-      },
-    })
+    // Extract the generated text from the OpenAI provider
+    if (data.openai && data.openai.generated_text) {
+      // Format the response for the AI SDK
+      return NextResponse.json({
+        role: "assistant",
+        content: data.openai.generated_text,
+        id: Date.now().toString(),
+      })
+    } else {
+      console.error("No generated text found in Eden AI response")
+      return NextResponse.json({ error: "No generated text found in response" }, { status: 500 })
+    }
   } catch (error) {
     console.error("Error:", error)
     return NextResponse.json({ error: "Internal server error" }, { status: 500 })
