@@ -24,7 +24,7 @@ export const authOptions: AuthOptions = {
       },
       async authorize(credentials) {
         if (credentials?.email && credentials?.password) {
-          return { id: "1", email: credentials.email, name: "Test User" };
+          return { id: "Demo User", email: credentials.email, name: "Test User" };
         }
         return null;
       },
