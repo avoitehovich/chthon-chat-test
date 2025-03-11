@@ -587,7 +587,7 @@ export default function ChatbotInterface() {
                     : "bg-gray-200 dark:bg-gray-800 text-gray-800 dark:text-gray-200"
                 } max-w-[85%] md:max-w-[75%]`}
               >
-                {m.role === "assistant" ? m.content : m.content}
+                {m.role === "assistant" ? formatMessageContent(m.content) : m.content}
               </div>
               <div className="text-xs text-gray-500 mt-1">
                 {m.createdAt ? formatTimestamp(m.createdAt.getTime()) : "Just now"}

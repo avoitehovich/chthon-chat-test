@@ -96,7 +96,7 @@ export async function POST(request: NextRequest) {
       console.error("Eden AI error:", errorData)
       return NextResponse.json({ error: "Error from Eden AI API" }, { status: response.status })
     }
-/*
+
     // Create a ReadableStream that will be returned to the client
     const encoder = new TextEncoder()
     const decoder = new TextDecoder()
@@ -173,33 +173,9 @@ export async function POST(request: NextRequest) {
         }
       },
     })
-      */
- //   JSON.stringify({ choices: [{ delta: { content: text } }] })
- //   role: "assistant",
- //   content: data.openai.generated_text
- const data = await response.json()
+      
 
-    // Clean up the response text
-    const cleanedText = data.openai.generated_text
-      // Remove ### markers
-      .replace(/###\s*/g, "")
-      // Remove ** markers
-      .replace(/\*\*/g, "")
-      // Ensure consistent bullet points
-      .replace(/^[-*]\s*/gm, "• ")
-      // Add newlines before categories
-      .replace(/([A-Za-z]+\s+Activities:)/g, "\n$1")
-      // Remove extra newlines
-      .replace(/\n{3,}/g, "\n\n")
-      .trim()
 
-    // Return the cleaned message
-    return NextResponse.json({
-      role: "assistant",
-      content: cleanedText,
-    })
-
-/*
     return new Response(stream, {
       headers: {
         "Content-Type": "text/event-stream",
@@ -207,7 +183,7 @@ export async function POST(request: NextRequest) {
         Connection: "keep-alive",
       },
     })
-    */
+    
   } catch (error) {
     console.error("Error:", error)
     return NextResponse.json({ error: "Internal server error" }, { status: 500 })
