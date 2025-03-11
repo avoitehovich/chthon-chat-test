@@ -52,28 +52,25 @@ function truncateConversationHistory(messages: Message[], maxTokens = 4000) {
 }
 
 export async function POST(request: Request) {
-  // Note: getServerSession() may not work in edge runtime
-  // For edge runtime, we'll use a simpler approach
-
-  const { messages } = await request.json()
-
-  // Apply memory management to prevent context windows from getting too large
-  const truncatedMessages = truncateConversationHistory(messages)
-
-  // Get the last message from the user
-  const lastMessage = truncatedMessages.filter((m) => m.role === "user").pop()
-
-  if (!lastMessage) {
-    return NextResponse.json({ error: "No user message found" }, { status: 400 })
-  }
-
-  // Format the conversation history for Eden AI
-  const history = truncatedMessages.slice(0, -1).map((m) => ({
-    role: m.role === "user" ? "user" : "assistant",
-    message: m.content,
-  }))
-
   try {
+    const { messages } = await request.json()
+
+    // Apply memory management to prevent context windows from getting too large
+    const truncatedMessages = truncateConversationHistory(messages)
+
+    // Get the last message from the user
+    const lastMessage = truncatedMessages.filter((m) => m.role === "user").pop()
+
+    if (!lastMessage) {
+      return NextResponse.json({ error: "No user message found" }, { status: 400 })
+    }
+
+    // Format the conversation history for Eden AI
+    const history = truncatedMessages.slice(0, -1).map((m) => ({
+      role: m.role === "user" ? "user" : "assistant",
+      message: m.content,
+    }))
+
     // Create a streaming response
     const response = await fetch("https://api.edenai.run/v2/text/chat", {
       method: "POST",
@@ -100,8 +97,62 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Error from Eden AI API" }, { status: response.status })
     }
 
-    // Return the streaming response directly
-    return new Response(response.body)
+    // Transform the Eden AI stream to a format compatible with the AI SDK
+    const transformStream = new TransformStream({
+      async transform(chunk, controller) {
+        const text = new TextDecoder().decode(chunk)
+
+        // Eden AI sends data in the format "data: {...}\n\n"
+        if (text.startsWith("data:")) {
+          try {
+            // Extract the JSON part
+            const jsonStr = text.replace(/^data: /, "").trim()
+            if (jsonStr === "[DONE]") {
+              return // End of stream
+            }
+
+            const data = JSON.parse(jsonStr)
+
+            // Format for AI SDK compatibility
+            if (data.openai && data.openai.generated_text) {
+              controller.enqueue(
+                new TextEncoder().encode(
+                  `data: ${JSON.stringify({ choices: [{ delta: { content: data.openai.generated_text } }] })}\n\n`,
+                ),
+              )
+            }
+          } catch (e) {
+            console.error("Error parsing streaming data:", e)
+          }
+        }
+      },
+    })
+
+    // Pipe the response through our transform stream
+    const readableStream = response.body
+    if (!readableStream) {
+      return NextResponse.json({ error: "No response body from Eden AI" }, { status: 500 })
+    }
+
+    const reader = readableStream.getReader()
+    const processStream = async () => {
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        await transformStream.writable.getWriter().write(value)
+      }
+      transformStream.writable.getWriter().close()
+    }
+
+    processStream().catch(console.error)
+
+    return new Response(transformStream.readable, {
+      headers: {
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache",
+        Connection: "keep-alive",
+      },
+    })
   } catch (error) {
     console.error("Error:", error)
     return NextResponse.json({ error: "Internal server error" }, { status: 500 })
