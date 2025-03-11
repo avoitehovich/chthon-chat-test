@@ -35,12 +35,20 @@ function formatMessageContent(content: string) {
     return (
       <div key={index} className={index > 0 ? "mt-6" : ""}>
         {lines.map((line, lineIndex) => {
+          // Check if line is a category (ends with colon)
+          if (line.match(/Activities:$/)) {
+            return (
+              <h3 key={lineIndex} className="font-semibold text-lg mb-3 mt-4">
+                {line}
+              </h3>
+            )
+          }
           // Check if line is a bullet point
-          if (line.trim().startsWith("•")) {
+          if (line.startsWith("• ")) {
             return (
               <div key={lineIndex} className="ml-4 flex items-start mb-2">
                 <span className="mr-2 text-gray-500">•</span>
-                <span>{line.trim().substring(1).trim()}</span>
+                <span>{line.substring(2)}</span>
               </div>
             )
           }
