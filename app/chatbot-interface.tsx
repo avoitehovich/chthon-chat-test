@@ -425,20 +425,14 @@ export default function ChatbotInterface() {
 
   // Format timestamp to relative time (e.g., "5 minutes ago")
   const formatTimestamp = (timestamp: string | number) => {
-    if (timestamp === null || timestamp === undefined) {  
-      console.warn("Invalid timestamp: null or undefined");  
-      return "Never"; // Or some other default value  
-    }  
     const date = typeof timestamp === "string" ? new Date(timestamp) : new Date(timestamp)
     return formatDistanceToNow(date, { addSuffix: true })
   }
 
   // Get a preview of the last message in a session
   const getSessionPreview = (session: ChatSession) => {
-    if (!session) return "New conversation" // Handle the case where session is undefined
     if (!session.messages || session.messages.length === 0) return "New conversation"
     const lastMessage = session.messages[session.messages.length - 1]
-    if (!lastMessage || !lastMessage.content) return "New conversation" // Handle if lastMessage or content is undefined
     const preview = lastMessage.content.slice(0, 30)
     return preview.length < lastMessage.content.length ? `${preview}...` : preview
   }
