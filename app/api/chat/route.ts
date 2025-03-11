@@ -1,161 +1,71 @@
-import { NextResponse } from "next/server"
-import type { Message } from "ai"
+import { type NextRequest, NextResponse } from "next/server"
+import { getServerSession } from "@/lib/auth"
+import { getChatSessions, createChatSession } from "@/lib/db"
+import { v4 as uuidv4 } from "uuid"
 
-// Use the Edge runtime for this route only
-export const runtime = "edge"
+// Explicitly set to Node.js runtime
+export const runtime = "nodejs"
 
-// Helper function to truncate conversation history if it gets too long
-function truncateConversationHistory(messages: Message[], maxTokens = 4000) {
-  // This is a simple approximation - in production you'd use a tokenizer
-  const estimatedTokens = messages.reduce((acc, message) => {
-    return acc + message.content.length / 4 // Rough estimate: 4 chars ~= 1 token
-  }, 0)
+export async function GET(request: NextRequest) {
+  try {
+    const session = await getServerSession()
 
-  if (estimatedTokens <= maxTokens) {
-    return messages
-  }
-
-  // Keep system messages and the most recent messages
-  const systemMessages = messages.filter((m) => m.role === "system")
-  const nonSystemMessages = messages.filter((m) => m.role !== "system")
-
-  // Sort by most recent and keep as many as possible within token limit
-  nonSystemMessages.sort((a, b) => {
-    const aTime = a.createdAt ? new Date(a.createdAt).getTime() : 0
-    const bTime = b.createdAt ? new Date(b.createdAt).getTime() : 0
-    return bTime - aTime
-  })
-
-  const truncatedMessages = [...systemMessages]
-  let currentTokens = systemMessages.reduce((acc, message) => {
-    return acc + message.content.length / 4
-  }, 0)
-
-  for (const message of nonSystemMessages) {
-    const messageTokens = message.content.length / 4
-    if (currentTokens + messageTokens <= maxTokens) {
-      truncatedMessages.push(message)
-      currentTokens += messageTokens
-    } else {
-      break
+    if (!session || !session.user) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
+
+    const userId = session.user.id
+    console.log("User ID from session:", userId)
+
+    if (!userId) {
+      return NextResponse.json({ error: "User ID not found in session" }, { status: 400 })
+    }
+
+    const chatSessions = await getChatSessions(userId)
+
+    return NextResponse.json(chatSessions)
+  } catch (error) {
+    console.error("Error fetching chat sessions:", error)
+    return NextResponse.json(
+      {
+        error: "Internal server error",
+        details: error,
+      },
+      { status: 500 },
+    )
   }
-
-  // Sort back to chronological order
-  truncatedMessages.sort((a, b) => {
-    const aTime = a.createdAt ? new Date(a.createdAt).getTime() : 0
-    const bTime = b.createdAt ? new Date(b.createdAt).getTime() : 0
-    return aTime - bTime
-  })
-
-  return truncatedMessages
 }
 
-export async function POST(request: Request) {
+export async function POST(request: NextRequest) {
   try {
-    const { messages } = await request.json()
+    const session = await getServerSession()
 
-    // Apply memory management to prevent context windows from getting too large
-    const truncatedMessages = truncateConversationHistory(messages)
-
-    // Get the last message from the user
-    const lastMessage = truncatedMessages.filter((m) => m.role === "user").pop()
-
-    if (!lastMessage) {
-      return NextResponse.json({ error: "No user message found" }, { status: 400 })
+    if (!session || !session.user) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
 
-    // Format the conversation history for Eden AI
-    const history = truncatedMessages.slice(0, -1).map((m) => ({
-      role: m.role === "user" ? "user" : "assistant",
-      message: m.content,
-    }))
+    const userId = session.user.id
+    console.log("User ID from session:", userId)
 
-    // Create a streaming response
-    const response = await fetch("https://api.edenai.run/v2/text/chat", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${process.env.EDEN_AI_API_KEY}`,
-      },
-      body: JSON.stringify({
-        providers: "openai",
-        text: lastMessage.content,
-        chatbot_global_action:
-          "You are a helpful AI assistant. When listing items, use simple bullet points (•) for list items and avoid using special characters like ### or **. Format categories with a colon at the end.",
-        previous_history: history,
-        temperature: 0.7,
-        max_tokens: 500,
-        fallback_providers: "",
-        stream: true,
-      }),
-    })
-
-    if (!response.ok) {
-      const errorData = await response.json()
-      console.error("Eden AI error:", errorData)
-      return NextResponse.json({ error: "Error from Eden AI API" }, { status: response.status })
+    if (!userId) {
+      return NextResponse.json({ error: "User ID not found in session" }, { status: 400 })
     }
 
-    // Transform the Eden AI stream to a format compatible with the AI SDK
-    const transformStream = new TransformStream({
-      async transform(chunk, controller) {
-        const text = new TextDecoder().decode(chunk)
+    const { name } = await request.json()
 
-        // Eden AI sends data in the format "data: {...}\n\n"
-        if (text.startsWith("data:")) {
-          try {
-            // Extract the JSON part
-            const jsonStr = text.replace(/^data: /, "").trim()
-            if (jsonStr === "[DONE]") {
-              return // End of stream
-            }
+    const id = uuidv4()
+    const newSession = await createChatSession(name || `Chat ${new Date().toISOString()}`, userId, id)
 
-            const data = JSON.parse(jsonStr)
-
-            // Format for AI SDK compatibility
-            if (data.openai && data.openai.generated_text) {
-              controller.enqueue(
-                new TextEncoder().encode(
-                  `data: ${JSON.stringify({ choices: [{ delta: { content: data.openai.generated_text } }] })}\n\n`,
-                ),
-              )
-            }
-          } catch (e) {
-            console.error("Error parsing streaming data:", e)
-          }
-        }
-      },
-    })
-
-    // Pipe the response through our transform stream
-    const readableStream = response.body
-    if (!readableStream) {
-      return NextResponse.json({ error: "No response body from Eden AI" }, { status: 500 })
-    }
-
-    const reader = readableStream.getReader()
-    const processStream = async () => {
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
-        await transformStream.writable.getWriter().write(value)
-      }
-      transformStream.writable.getWriter().close()
-    }
-
-    processStream().catch(console.error)
-
-    return new Response(transformStream.readable, {
-      headers: {
-        "Content-Type": "text/event-stream",
-        "Cache-Control": "no-cache",
-        Connection: "keep-alive",
-      },
-    })
+    return NextResponse.json(newSession)
   } catch (error) {
-    console.error("Error:", error)
-    return NextResponse.json({ error: "Internal server error" }, { status: 500 })
+    console.error("Error creating chat session:", error)
+    return NextResponse.json(
+      {
+        error: "Internal server error",
+        details: error,
+      },
+      { status: 500 },
+    )
   }
 }
 
