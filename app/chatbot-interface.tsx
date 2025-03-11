@@ -88,6 +88,7 @@ export default function ChatbotInterface() {
     handleSubmit: handleChatSubmit,
     isLoading,
     setMessages,
+    error,
   } = useChat({
     api: "/api/chat",
     initialMessages: [],
@@ -101,7 +102,17 @@ export default function ChatbotInterface() {
         })
       }
     },
+    onError: (error) => {
+      console.error("Chat error:", error)
+    },
   })
+
+  // Add this after the useChat hook
+  useEffect(() => {
+    if (error) {
+      console.error("Chat error:", error)
+    }
+  }, [error])
 
   // Filter sessions based on search query
   const filteredSessions = useMemo(() => {
@@ -579,7 +590,7 @@ export default function ChatbotInterface() {
                 {m.role === "assistant" ? formatMessageContent(m.content) : m.content}
               </div>
               <div className="text-xs text-gray-500 mt-1">
-                {m.createdAt ? formatTimestamp(m.createdAt.toISOString()) : "Just now"}
+                {m.createdAt ? formatTimestamp(m.createdAt.getTime()) : "Just now"}
               </div>
             </div>
           ))}
