@@ -18,7 +18,7 @@ export async function initDatabase() {
     await sql`
       CREATE TABLE IF NOT EXISTS accounts (
         id TEXT PRIMARY KEY,
-        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        user_id TEXT NOT NULL,
         type TEXT NOT NULL,
         provider TEXT NOT NULL,
         provider_account_id TEXT NOT NULL,
@@ -38,7 +38,7 @@ export async function initDatabase() {
       CREATE TABLE IF NOT EXISTS sessions (
         id TEXT PRIMARY KEY,
         session_token TEXT UNIQUE NOT NULL,
-        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        user_id TEXT NOT NULL,
         expires TIMESTAMP WITH TIME ZONE NOT NULL
       )
     `
@@ -53,12 +53,27 @@ export async function initDatabase() {
       )
     `
 
-    // Create chat sessions table
+    // Check if chat_sessions table exists
+    const chatSessionsExists = await sql`
+      SELECT EXISTS (
+        SELECT FROM information_schema.tables 
+        WHERE table_schema = 'public' 
+        AND table_name = 'chat_sessions'
+      )
+    `
+
+    // If chat_sessions table exists, drop it to recreate without foreign key constraint
+    if (chatSessionsExists.rows[0].exists) {
+      await sql`DROP TABLE IF EXISTS messages`
+      await sql`DROP TABLE IF EXISTS chat_sessions`
+    }
+
+    // Create chat sessions table without foreign key constraint
     await sql`
       CREATE TABLE IF NOT EXISTS chat_sessions (
         id TEXT PRIMARY KEY,
         name TEXT NOT NULL,
-        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        user_id TEXT NOT NULL,
         last_updated TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
       )
     `
