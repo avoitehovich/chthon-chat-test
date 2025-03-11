@@ -2,10 +2,12 @@
 
 import { useState, useEffect, useRef, useMemo } from "react"
 import type React from "react"
-import { PlusIcon, SendIcon, TrashIcon, MenuIcon, XIcon } from "lucide-react"
+import { PlusIcon, SendIcon, TrashIcon, MenuIcon, XIcon, LogOut, LogIn } from "lucide-react"
 import { formatDistanceToNow } from "date-fns"
 import { SearchChat } from "@/components/search-chat"
 import { ThemeToggle } from "@/components/theme-toggle"
+import { useSession, signIn, signOut } from "next-auth/react"
+import { v4 as uuidv4 } from "uuid"
 
 // Define types for our chat data
 interface Message {
@@ -19,7 +21,7 @@ interface ChatSession {
   id: string
   name: string
   messages: Message[]
-  lastUpdated: number
+  last_updated: string
 }
 
 // Add this helper function at the top level
@@ -33,20 +35,12 @@ function formatMessageContent(content: string) {
     return (
       <div key={index} className={index > 0 ? "mt-6" : ""}>
         {lines.map((line, lineIndex) => {
-          // Check if line is a category (ends with colon)
-          if (line.match(/Activities:$/)) {
-            return (
-              <h3 key={lineIndex} className="font-semibold text-lg mb-3 mt-4">
-                {line}
-              </h3>
-            )
-          }
           // Check if line is a bullet point
-          if (line.startsWith("• ")) {
+          if (line.trim().startsWith("•")) {
             return (
               <div key={lineIndex} className="ml-4 flex items-start mb-2">
                 <span className="mr-2 text-gray-500">•</span>
-                <span>{line.substring(2)}</span>
+                <span>{line.trim().substring(1).trim()}</span>
               </div>
             )
           }
@@ -63,9 +57,7 @@ function formatMessageContent(content: string) {
 }
 
 export default function ChatbotInterface() {
-  // State for the current input and loading state
-  const [input, setInput] = useState("")
-  const [isLoading, setIsLoading] = useState(false)
+  const { data: session } = useSession()
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false)
   const [isMobile, setIsMobile] = useState(false)
 
@@ -78,6 +70,145 @@ export default function ChatbotInterface() {
 
   // Add search state
   const [searchQuery, setSearchQuery] = useState("")
+
+  // State for chat messages
+  const [messages, setMessages] = useState<
+    Array<{
+      id: string
+      role: "user" | "assistant"
+      content: string
+      createdAt?: Date
+    }>
+  >([])
+  const [input, setInput] = useState("")
+  const [isLoading, setIsLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  // Handle input change
+  const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    setInput(e.target.value)
+  }
+
+  // Handle form submission
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+
+    if (!input.trim()) return
+
+    if (!currentSessionId) {
+      await createNewSession()
+    }
+
+    // Create user message
+    const userMessage = {
+      id: uuidv4(),
+      role: "user" as const,
+      content: input.trim(),
+      createdAt: new Date(),
+    }
+
+    // Add user message to the UI
+    setMessages((prev) => [...prev, userMessage])
+
+    // Clear input
+    setInput("")
+
+    // Set loading state
+    setIsLoading(true)
+    setError(null)
+
+    try {
+      // If user is authenticated, save message to database
+      if (session?.user && currentSessionId) {
+        saveMessageToDatabase(currentSessionId, {
+          id: userMessage.id,
+          role: userMessage.role,
+          content: userMessage.content,
+        })
+      }
+
+      // Send message to API
+      const response = await fetch("/api/chat", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          messages: [...messages, userMessage],
+        }),
+      })
+
+      if (!response.ok) {
+        const errorData = await response.json()
+        throw new Error(errorData.error || "Failed to get response")
+      }
+
+      // Parse the response
+      const data = await response.json()
+      console.log("API response:", data)
+
+      // Check if the response has the expected format
+      if (data.messages && data.messages.length > 0) {
+        const assistantMessage = data.messages[0]
+
+        // Add assistant message to the UI
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: assistantMessage.id,
+            role: assistantMessage.role,
+            content: assistantMessage.content,
+            createdAt: new Date(assistantMessage.createdAt || Date.now()),
+          },
+        ])
+
+        // Save assistant message to database if authenticated
+        if (session?.user && currentSessionId) {
+          saveMessageToDatabase(currentSessionId, {
+            id: assistantMessage.id,
+            role: assistantMessage.role,
+            content: assistantMessage.content,
+          })
+        }
+      } else if (data.role === "assistant") {
+        // Handle direct response format
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: data.id || uuidv4(),
+            role: data.role,
+            content: data.content,
+            createdAt: new Date(),
+          },
+        ])
+
+        // Save assistant message to database if authenticated
+        if (session?.user && currentSessionId) {
+          saveMessageToDatabase(currentSessionId, {
+            id: data.id || uuidv4(),
+            role: data.role,
+            content: data.content,
+          })
+        }
+      } else {
+        throw new Error("Unexpected response format")
+      }
+    } catch (err) {
+      console.error("Error sending message:", err)
+      setError(err instanceof Error ? err.message : "An error occurred")
+    } finally {
+      setIsLoading(false)
+      // Scroll to bottom after new message
+      scrollToBottom()
+    }
+  }
+
+  // Add this after the useChat hook
+  useEffect(() => {
+    if (error) {
+      console.error("Chat error:", error)
+    }
+  }, [error])
 
   // Filter sessions based on search query
   const filteredSessions = useMemo(() => {
@@ -95,7 +226,6 @@ export default function ChatbotInterface() {
 
   // Get current session
   const currentSession = sessions.find((s) => s.id === currentSessionId) || null
-  const messages = currentSession?.messages || []
 
   // Scroll to bottom of chat
   const scrollToBottom = () => {
@@ -120,23 +250,89 @@ export default function ChatbotInterface() {
     return () => window.removeEventListener("resize", checkIfMobile)
   }, [])
 
-  // Load sessions from localStorage on initial render
+  // Load sessions from database or localStorage
   useEffect(() => {
-    const savedSessions = localStorage.getItem("chatSessions")
-    if (savedSessions) {
-      const parsedSessions = JSON.parse(savedSessions) as ChatSession[]
-      setSessions(parsedSessions)
+    const loadSessions = async () => {
+      if (session?.user) {
+        // User is authenticated, load from database
+        try {
+          const response = await fetch("/api/chat-sessions")
+          if (response.ok) {
+            const data = await response.json()
+            setSessions(data)
 
-      // Set current session to the most recently updated one
-      if (parsedSessions.length > 0) {
-        const mostRecent = parsedSessions.sort((a, b) => b.lastUpdated - a.lastUpdated)[0]
-        setCurrentSessionId(mostRecent.id)
+            // Set current session to the most recently updated one
+            if (data.length > 0) {
+              const mostRecent = data.sort((a: ChatSession, b: ChatSession) => {
+                return new Date(b.last_updated).getTime() - new Date(a.last_updated).getTime()
+              })[0]
+              setCurrentSessionId(mostRecent.id)
+
+              // Load messages for this session
+              const messagesResponse = await fetch(`/api/chat-sessions/${mostRecent.id}/messages`)
+              if (messagesResponse.ok) {
+                const messagesData = await messagesResponse.json()
+                setMessages(
+                  messagesData.map((m: any) => ({
+                    id: m.id,
+                    role: m.role,
+                    content: m.content,
+                    createdAt: new Date(m.timestamp),
+                  })),
+                )
+              }
+            } else {
+              createNewSession()
+            }
+          } else {
+            // Fallback to localStorage if API fails
+            loadFromLocalStorage()
+          }
+        } catch (error) {
+          console.error("Error loading sessions:", error)
+          loadFromLocalStorage()
+        }
+      } else {
+        // User is not authenticated, load from localStorage
+        loadFromLocalStorage()
       }
-    } else {
-      // Create a default session if none exists
-      createNewSession()
     }
-  }, [])
+
+    const loadFromLocalStorage = () => {
+      const savedSessions = localStorage.getItem("chatSessions")
+      if (savedSessions) {
+        const parsedSessions = JSON.parse(savedSessions) as ChatSession[]
+        setSessions(parsedSessions)
+
+        // Set current session to the most recently updated one
+        if (parsedSessions.length > 0) {
+          const mostRecent = parsedSessions.sort((a, b) => {
+            return new Date(b.last_updated).getTime() - new Date(a.last_updated).getTime()
+          })[0]
+          setCurrentSessionId(mostRecent.id)
+
+          // Load messages for this session
+          if (mostRecent.messages && mostRecent.messages.length > 0) {
+            setMessages(
+              mostRecent.messages.map((m) => ({
+                id: m.id,
+                role: m.role,
+                content: m.content,
+                createdAt: new Date(m.timestamp),
+              })),
+            )
+          }
+        } else {
+          createNewSession()
+        }
+      } else {
+        // Create a default session if none exists
+        createNewSession()
+      }
+    }
+
+    loadSessions()
+  }, [session, setMessages])
 
   // Scroll to bottom when messages change or when switching sessions
   useEffect(() => {
@@ -145,22 +341,59 @@ export default function ChatbotInterface() {
 
   // Save sessions to localStorage whenever they change
   useEffect(() => {
-    if (sessions.length > 0) {
+    if (sessions.length > 0 && !session?.user) {
       localStorage.setItem("chatSessions", JSON.stringify(sessions))
     }
-  }, [sessions])
+  }, [sessions, session])
+
+  // Save message to database
+  const saveMessageToDatabase = async (sessionId: string, message: { id: string; role: string; content: string }) => {
+    try {
+      await fetch(`/api/chat-sessions/${sessionId}/messages`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(message),
+      })
+    } catch (error) {
+      console.error("Error saving message to database:", error)
+    }
+  }
 
   // Create a new chat session
-  const createNewSession = () => {
-    const newSession: ChatSession = {
-      id: Date.now().toString(),
-      name: `Chat ${sessions.length + 1}`,
-      messages: [],
-      lastUpdated: Date.now(),
-    }
+  const createNewSession = async () => {
+    const newSessionId = uuidv4()
+    const newSessionName = `Chat ${sessions.length + 1}`
 
-    setSessions((prev) => [...prev, newSession])
-    setCurrentSessionId(newSession.id)
+    if (session?.user) {
+      // User is authenticated, create session in database
+      try {
+        const response = await fetch("/api/chat-sessions", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ name: newSessionName }),
+        })
+
+        if (response.ok) {
+          const data = await response.json()
+          setSessions((prev) => [...prev, { ...data, messages: [] }])
+          setCurrentSessionId(data.id)
+          setMessages([])
+        } else {
+          // Fallback to local if API fails
+          createLocalSession(newSessionId, newSessionName)
+        }
+      } catch (error) {
+        console.error("Error creating session:", error)
+        createLocalSession(newSessionId, newSessionName)
+      }
+    } else {
+      // User is not authenticated, store locally
+      createLocalSession(newSessionId, newSessionName)
+    }
 
     // Close mobile menu after creating a new session
     if (isMobile) {
@@ -168,15 +401,58 @@ export default function ChatbotInterface() {
     }
   }
 
+  const createLocalSession = (id: string, name: string) => {
+    const newSession: ChatSession = {
+      id,
+      name,
+      messages: [],
+      last_updated: new Date().toISOString(),
+    }
+
+    setSessions((prev) => [...prev, newSession])
+    setCurrentSessionId(id)
+    setMessages([])
+  }
+
   // Delete a chat session
-  const deleteSession = (sessionId: string) => {
+  const deleteSession = async (sessionId: string) => {
+    if (session?.user) {
+      // User is authenticated, delete from database
+      try {
+        const response = await fetch(`/api/chat-sessions/${sessionId}`, {
+          method: "DELETE",
+        })
+
+        if (!response.ok) {
+          console.error("Error deleting session from database")
+        }
+      } catch (error) {
+        console.error("Error deleting session:", error)
+      }
+    }
+
     setSessions((prev) => prev.filter((s) => s.id !== sessionId))
 
     // If we deleted the current session, switch to another one
     if (sessionId === currentSessionId) {
       const remainingSessions = sessions.filter((s) => s.id !== sessionId)
       if (remainingSessions.length > 0) {
-        setCurrentSessionId(remainingSessions[0].id)
+        const nextSession = remainingSessions[0]
+        setCurrentSessionId(nextSession.id)
+
+        // Load messages for this session
+        if (nextSession.messages && nextSession.messages.length > 0) {
+          setMessages(
+            nextSession.messages.map((m) => ({
+              id: m.id,
+              role: m.role,
+              content: m.content,
+              createdAt: new Date(m.timestamp),
+            })),
+          )
+        } else {
+          setMessages([])
+        }
       } else {
         createNewSession()
       }
@@ -184,118 +460,59 @@ export default function ChatbotInterface() {
   }
 
   // Switch to a different session
-  const switchSession = (sessionId: string) => {
+  const switchSession = async (sessionId: string) => {
     setCurrentSessionId(sessionId)
+
+    if (session?.user) {
+      // Load messages from database
+      try {
+        const response = await fetch(`/api/chat-sessions/${sessionId}/messages`)
+        if (response.ok) {
+          const data = await response.json()
+          setMessages(
+            data.map((m: any) => ({
+              id: m.id,
+              role: m.role,
+              content: m.content,
+              createdAt: new Date(m.timestamp),
+            })),
+          )
+        }
+      } catch (error) {
+        console.error("Error loading messages:", error)
+      }
+    } else {
+      // Load messages from local session
+      const currentSession = sessions.find((s) => s.id === sessionId)
+      if (currentSession && currentSession.messages) {
+        setMessages(
+          currentSession.messages.map((m) => ({
+            id: m.id,
+            role: m.role,
+            content: m.content,
+            createdAt: new Date(m.timestamp),
+          })),
+        )
+      } else {
+        setMessages([])
+      }
+    }
 
     // Close mobile menu after switching sessions
     if (isMobile) {
       setIsMobileMenuOpen(false)
     }
-
-    // We'll scroll to bottom in the useEffect that watches currentSessionId
-  }
-
-  // Handle input change
-  const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    setInput(e.target.value)
-  }
-
-  // Handle form submission
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!input.trim() || !currentSessionId) return
-
-    // Create user message
-    const userMessage: Message = {
-      id: Date.now().toString(),
-      role: "user",
-      content: input.trim(),
-      timestamp: Date.now(),
-    }
-
-    // Update session with user message
-    const updatedSessions = sessions.map((session) => {
-      if (session.id === currentSessionId) {
-        return {
-          ...session,
-          messages: [...session.messages, userMessage],
-          lastUpdated: Date.now(),
-        }
-      }
-      return session
-    })
-
-    setSessions(updatedSessions)
-    setInput("")
-    setIsLoading(true)
-
-    // Scroll to bottom after sending message
-    scrollToBottom()
-
-    try {
-      // Get the updated messages for the current session
-      const currentMessages = updatedSessions.find((s) => s.id === currentSessionId)?.messages || []
-
-      // Send the message to the API
-      const response = await fetch("/api/chat", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          messages: currentMessages.map((m) => ({
-            role: m.role,
-            content: m.content,
-          })),
-        }),
-      })
-
-      if (!response.ok) {
-        throw new Error("Failed to send message")
-      }
-
-      const data = await response.json()
-
-      // Create assistant message
-      const assistantMessage: Message = {
-        id: (Date.now() + 1).toString(),
-        role: "assistant",
-        content: data.content,
-        timestamp: Date.now(),
-      }
-
-      // Update session with assistant message
-      setSessions((prev) =>
-        prev.map((session) => {
-          if (session.id === currentSessionId) {
-            return {
-              ...session,
-              messages: [...session.messages, assistantMessage],
-              lastUpdated: Date.now(),
-            }
-          }
-          return session
-        }),
-      )
-
-      // Scroll to bottom after receiving response
-      scrollToBottom()
-    } catch (error) {
-      console.error("Error sending message:", error)
-      // Optionally show an error message to the user
-    } finally {
-      setIsLoading(false)
-    }
   }
 
   // Format timestamp to relative time (e.g., "5 minutes ago")
-  const formatTimestamp = (timestamp: number) => {
-    return formatDistanceToNow(timestamp, { addSuffix: true })
+  const formatTimestamp = (timestamp: string | number) => {
+    const date = typeof timestamp === "string" ? new Date(timestamp) : new Date(timestamp)
+    return formatDistanceToNow(date, { addSuffix: true })
   }
 
   // Get a preview of the last message in a session
   const getSessionPreview = (session: ChatSession) => {
-    if (session.messages.length === 0) return "New conversation"
+    if (!session.messages || session.messages.length === 0) return "New conversation"
     const lastMessage = session.messages[session.messages.length - 1]
     const preview = lastMessage.content.slice(0, 30)
     return preview.length < lastMessage.content.length ? `${preview}...` : preview
@@ -333,25 +550,61 @@ export default function ChatbotInterface() {
         </div>
       </div>
 
+      {/* User Authentication */}
+      <div className="p-4 border-b dark:border-gray-700">
+        {session ? (
+          <div className="flex items-center justify-between">
+            <div className="flex items-center">
+              {session.user?.image && (
+                <img
+                  src={session.user.image || "/placeholder.svg"}
+                  alt={session.user.name || "User"}
+                  className="h-8 w-8 rounded-full mr-2"
+                />
+              )}
+              <span className="text-sm font-medium truncate">{session.user?.name || session.user?.email}</span>
+            </div>
+            <button
+              className="h-8 w-8 flex items-center justify-center rounded-md hover:bg-gray-100 dark:hover:bg-gray-800"
+              onClick={() => signOut()}
+            >
+              <LogOut className="h-4 w-4" />
+            </button>
+          </div>
+        ) : (
+          <button
+            className="flex items-center justify-center w-full py-2 px-4 border border-gray-300 dark:border-gray-700 rounded-md text-sm font-medium text-gray-700 dark:text-gray-200 bg-white dark:bg-gray-800 hover:bg-gray-50 dark:hover:bg-gray-700"
+            onClick={() => signIn()}
+          >
+            <LogIn className="h-4 w-4 mr-2" />
+            Sign in to save chats
+          </button>
+        )}
+      </div>
+
       {/* Add Search */}
       <div className="p-4 border-b">
         <SearchChat onSearch={handleSearch} />
       </div>
 
-      <div className="p-4 text-sm text-gray-600">{searchQuery ? "Search results:" : "Your chat sessions:"}</div>
+      <div className="p-4 text-sm text-gray-600 dark:text-gray-400">
+        {searchQuery ? "Search results:" : "Your chat sessions:"}
+      </div>
 
       {/* Chat Sessions List */}
       <div className="flex-1 overflow-auto">
         {filteredSessions.map((session) => (
           <div
             key={session.id}
-            className={`p-3 flex justify-between items-start cursor-pointer hover:bg-gray-100 ${session.id === currentSessionId ? "bg-gray-100" : ""}`}
+            className={`p-3 flex justify-between items-start cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-800 ${session.id === currentSessionId ? "bg-gray-100 dark:bg-gray-800" : ""}`}
             onClick={() => switchSession(session.id)}
           >
             <div className="flex-1 min-w-0">
               <div className="font-medium truncate">{session.name}</div>
-              <div className="text-xs text-gray-500 truncate">{getSessionPreview(session)}</div>
-              <div className="text-xs text-gray-400 mt-1">{formatTimestamp(session.lastUpdated)}</div>
+              <div className="text-xs text-gray-500 dark:text-gray-400 truncate">{getSessionPreview(session)}</div>
+              <div className="text-xs text-gray-400 dark:text-gray-500 mt-1">
+                {formatTimestamp(session.last_updated)}
+              </div>
             </div>
             <button
               className="ml-2 text-gray-400 hover:text-red-500"
@@ -406,12 +659,14 @@ export default function ChatbotInterface() {
               >
                 {m.role === "assistant" ? formatMessageContent(m.content) : m.content}
               </div>
-              <div className="text-xs text-gray-500 mt-1">{formatTimestamp(m.timestamp)}</div>
+              <div className="text-xs text-gray-500 mt-1">
+                {m.createdAt ? formatTimestamp(m.createdAt.getTime()) : "Just now"}
+              </div>
             </div>
           ))}
           {isLoading && (
             <div className="mb-3 md:mb-4 text-left">
-              <div className="inline-block p-2 rounded-lg bg-gray-200">
+              <div className="inline-block p-2 rounded-lg bg-gray-200 dark:bg-gray-800">
                 <div className="flex space-x-2">
                   <div
                     className="w-2 h-2 rounded-full bg-gray-400 animate-bounce"
@@ -440,14 +695,14 @@ export default function ChatbotInterface() {
                   value={input}
                   onChange={handleInputChange}
                   placeholder="Send a message..."
-                  className="flex-1 bg-transparent border-0 focus:ring-0 resize-none py-2 md:py-3 px-3 md:px-4 h-10 md:h-12 max-h-32 md:max-h-48 overflow-auto text-sm md:text-base"
+                  className="flex-1 bg-transparent border-0 focus:ring-0 resize-none py-2 md:py-3 px-3 md:px-4 h-10 md:h-12 max-h-32 md:max-h-48 overflow-auto text-sm md:text-base dark:text-gray-200"
                   style={{ outline: "none" }}
                   disabled={isLoading}
                 />
                 <div className="flex items-center pr-2">
                   <button
                     type="submit"
-                    className="text-gray-500 h-8 w-8 flex items-center justify-center rounded-md hover:bg-gray-200"
+                    className="text-gray-500 h-8 w-8 flex items-center justify-center rounded-md hover:bg-gray-200 dark:hover:bg-gray-700"
                     disabled={isLoading || !input.trim()}
                   >
                     <SendIcon className="h-5 w-5" />
@@ -461,3 +716,4 @@ export default function ChatbotInterface() {
     </div>
   )
 }
+
