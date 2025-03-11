@@ -589,9 +589,7 @@ export default function ChatbotInterface() {
               >
                 {m.role === "assistant" ? formatMessageContent(m.content) : m.content}
               </div>
-              <div className="text-xs text-gray-500 mt-1">
-                {m.createdAt ? formatTimestamp(m.createdAt.getTime()) : "Just now"}
-              </div>
+             
             </div>
           ))}
           {isLoading && (

@@ -179,7 +179,7 @@ export async function POST(request: NextRequest) {
  //   content: data.openai.generated_text
  const data = await response.json();
     return Response.json({
-      role: "assistant1",
+      role: "assistant",
       content: data.openai.generated_text,
     })
 
