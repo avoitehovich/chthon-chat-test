@@ -1,9 +1,12 @@
-import { NextResponse } from "next/server"
+import { type NextRequest, NextResponse } from "next/server"
 import { initDatabase } from "@/lib/db"
 
-export async function GET() {
+export const runtime = "nodejs"
+
+export async function GET(request: NextRequest) {
   try {
     const result = await initDatabase()
+
     if (result.success) {
       return NextResponse.json({ success: true, message: "Database initialized successfully" })
     } else {
@@ -11,7 +14,7 @@ export async function GET() {
     }
   } catch (error) {
     console.error("Error initializing database:", error)
-    return NextResponse.json({ error: "Internal server error" }, { status: 500 })
+    return NextResponse.json({ error: "Internal server error", details: error }, { status: 500 })
   }
 }
 

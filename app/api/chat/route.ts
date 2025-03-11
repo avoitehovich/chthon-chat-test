@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server"
+import { type NextRequest, NextResponse } from "next/server"
 import type { Message } from "ai"
 
 // Use the Edge runtime for this route only
@@ -51,7 +51,7 @@ function truncateConversationHistory(messages: Message[], maxTokens = 4000) {
   return truncatedMessages
 }
 
-export async function POST(request: Request) {
+export async function POST(request: NextRequest) {
   try {
     const { messages } = await request.json()
 
@@ -97,56 +97,77 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Error from Eden AI API" }, { status: response.status })
     }
 
-    // Transform the Eden AI stream to a format compatible with the AI SDK
-    const transformStream = new TransformStream({
-      async transform(chunk, controller) {
-        const text = new TextDecoder().decode(chunk)
+    // Create a ReadableStream that will be returned to the client
+    const encoder = new TextEncoder()
+    const decoder = new TextDecoder()
 
-        // Eden AI sends data in the format "data: {...}\n\n"
-        if (text.startsWith("data:")) {
-          try {
-            // Extract the JSON part
-            const jsonStr = text.replace(/^data: /, "").trim()
-            if (jsonStr === "[DONE]") {
-              return // End of stream
+    const stream = new ReadableStream({
+      async start(controller) {
+        // Function to read from the response body stream
+        const reader = response.body?.getReader()
+        if (!reader) {
+          controller.error("No response body")
+          return
+        }
+
+        let accumulatedData = ""
+
+        try {
+          while (true) {
+            const { done, value } = await reader.read()
+
+            if (done) {
+              // Send a final [DONE] message to signal completion
+              controller.enqueue(encoder.encode("data: [DONE]\n\n"))
+              break
             }
 
-            const data = JSON.parse(jsonStr)
+            // Decode the chunk and add it to our accumulated data
+            const chunk = decoder.decode(value, { stream: true })
+            accumulatedData += chunk
 
-            // Format for AI SDK compatibility
-            if (data.openai && data.openai.generated_text) {
-              controller.enqueue(
-                new TextEncoder().encode(
-                  `data: ${JSON.stringify({ choices: [{ delta: { content: data.openai.generated_text } }] })}\n\n`,
-                ),
-              )
+            // Process any complete messages in the accumulated data
+            let match
+            const regex = /data: (.*?)(\n\n|$)/g
+
+            while ((match = regex.exec(accumulatedData)) !== null) {
+              const data = match[1]
+
+              if (data === "[DONE]") {
+                // End of stream from Eden AI
+                controller.enqueue(encoder.encode("data: [DONE]\n\n"))
+              } else {
+                try {
+                  const parsed = JSON.parse(data)
+
+                  if (parsed.openai && parsed.openai.generated_text) {
+                    // Format for AI SDK compatibility
+                    const aiSdkFormat = JSON.stringify({
+                      choices: [{ delta: { content: parsed.openai.generated_text } }],
+                    })
+                    controller.enqueue(encoder.encode(`data: ${aiSdkFormat}\n\n`))
+                  }
+                } catch (e) {
+                  console.error("Error parsing JSON:", e)
+                }
+              }
+
+              // Remove the processed message from accumulated data
+              accumulatedData = accumulatedData.substring(match.index + match[0].length)
+              regex.lastIndex = 0 // Reset regex index
             }
-          } catch (e) {
-            console.error("Error parsing streaming data:", e)
           }
+
+          // Close the stream
+          controller.close()
+        } catch (e) {
+          console.error("Error processing stream:", e)
+          controller.error(e)
         }
       },
     })
 
-    // Pipe the response through our transform stream
-    const readableStream = response.body
-    if (!readableStream) {
-      return NextResponse.json({ error: "No response body from Eden AI" }, { status: 500 })
-    }
-
-    const reader = readableStream.getReader()
-    const processStream = async () => {
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
-        await transformStream.writable.getWriter().write(value)
-      }
-      transformStream.writable.getWriter().close()
-    }
-
-    processStream().catch(console.error)
-
-    return new Response(transformStream.readable, {
+    return new Response(stream, {
       headers: {
         "Content-Type": "text/event-stream",
         "Cache-Control": "no-cache",
