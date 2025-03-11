@@ -177,10 +177,26 @@ export async function POST(request: NextRequest) {
  //   JSON.stringify({ choices: [{ delta: { content: text } }] })
  //   role: "assistant",
  //   content: data.openai.generated_text
- const data = await response.json();
-    return Response.json({
+ const data = await response.json()
+
+    // Clean up the response text
+    const cleanedText = data.openai.generated_text
+      // Remove ### markers
+      .replace(/###\s*/g, "")
+      // Remove ** markers
+      .replace(/\*\*/g, "")
+      // Ensure consistent bullet points
+      .replace(/^[-*]\s*/gm, "• ")
+      // Add newlines before categories
+      .replace(/([A-Za-z]+\s+Activities:)/g, "\n$1")
+      // Remove extra newlines
+      .replace(/\n{3,}/g, "\n\n")
+      .trim()
+
+    // Return the cleaned message
+    return NextResponse.json({
       role: "assistant",
-      content: data.openai.generated_text,
+      content: cleanedText,
     })
 
 /*
