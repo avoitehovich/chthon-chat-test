@@ -97,90 +97,29 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Error from Eden AI API" }, { status: response.status })
     }
 
-    // Create a ReadableStream that will be returned to the client
-    const encoder = new TextEncoder()
-    const decoder = new TextDecoder()
+    const data = await response.json()
 
-    let streamContent = ""
+    // Clean up the response text
+    const cleanedText = data.openai.generated_text
+      // Remove ### markers
+      .replace(/###\s*/g, "")
+      // Remove ** markers
+      .replace(/\*\*/g, "")
+      // Ensure consistent bullet points
+      .replace(/^[-*]\s*/gm, "• ")
+      // Add newlines before categories
+      .replace(/([A-Za-z]+\s+Activities:)/g, "\n$1")
+      // Remove extra newlines
+      .replace(/\n{3,}/g, "\n\n")
+      .trim()
 
-    const stream = new ReadableStream({
-      async start(controller) {
-        // Function to read from the response body stream
-        const reader = response.body?.getReader()
-        if (!reader) {
-          controller.error("No response body")
-          return
-        }
-
-        try {
-          // Send an initial message to start the stream
-          controller.enqueue(encoder.encode(`data: ${JSON.stringify({ choices: [{ delta: { content: "" } }] })}\n\n`))
-
-          while (true) {
-            const { done, value } = await reader.read()
-
-            if (done) {
-              // If we've collected content, send it as a final message
-              if (streamContent.length > 0) {
-                controller.enqueue(
-                  encoder.encode(`data: ${JSON.stringify({ choices: [{ delta: { content: streamContent } }] })}\n\n`),
-                )
-                streamContent = ""
-              }
-
-              // Send a final [DONE] message to signal completion
-              controller.enqueue(encoder.encode("data: [DONE]\n\n"))
-              break
-            }
-
-            // Decode the chunk
-            const chunk = decoder.decode(value, { stream: true })
-
-            // Process the chunk
-            const lines = chunk.split("\n")
-            for (const line of lines) {
-              if (line.startsWith("data:")) {
-                try {
-                  const jsonStr = line.replace(/^data: /, "").trim()
-                  if (jsonStr === "[DONE]") {
-                    continue // Skip Eden AI's DONE message, we'll send our own
-                  }
-
-                  const data = JSON.parse(jsonStr)
-
-                  if (data.openai && data.openai.generated_text) {
-                    // Collect the content
-                    const text = data.openai.generated_text
-                    streamContent += text
-
-                    // Send the chunk to the client
-                    controller.enqueue(
-                      encoder.encode(`data: ${JSON.stringify({ choices: [{ delta: { content: text } }] })}\n\n`),
-                    )
-                  }
-                } catch (e) {
-                  console.error("Error parsing JSON:", e, line)
-                }
-              }
-            }
-          }
-
-          // Close the stream
-          controller.close()
-        } catch (e) {
-          console.error("Error processing stream:", e)
-          controller.error(e)
-        }
-      },
+    // Return the cleaned message
+    return NextResponse.json({
+      role: "assistant",
+      content: cleanedText,
     })
 
-    return new Response(stream, {
-      headers: {
-        "Content-Type": "text/event-stream",
-        "Cache-Control": "no-cache",
-        Connection: "keep-alive",
-      },
-    })
+
   } catch (error) {
     console.error("Error:", error)
     return NextResponse.json({ error: "Internal server error" }, { status: 500 })
