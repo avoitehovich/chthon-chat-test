@@ -93,6 +93,7 @@ export default function ChatbotInterface() {
     api: "/api/chat",
     initialMessages: [],
     onFinish: (message) => {
+      console.log("Chat message finished:", message)
       // When a message is finished, update the session in the database
       if (currentSessionId && session?.user) {
         saveMessageToDatabase(currentSessionId, {

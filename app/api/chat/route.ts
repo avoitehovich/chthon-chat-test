@@ -101,6 +101,8 @@ export async function POST(request: NextRequest) {
     const encoder = new TextEncoder()
     const decoder = new TextDecoder()
 
+    let streamContent = ""
+
     const stream = new ReadableStream({
       async start(controller) {
         // Function to read from the response body stream
@@ -110,51 +112,56 @@ export async function POST(request: NextRequest) {
           return
         }
 
-        let accumulatedData = ""
-
         try {
+          // Send an initial message to start the stream
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify({ choices: [{ delta: { content: "" } }] })}\n\n`))
+
           while (true) {
             const { done, value } = await reader.read()
 
             if (done) {
+              // If we've collected content, send it as a final message
+              if (streamContent.length > 0) {
+                controller.enqueue(
+                  encoder.encode(`data: ${JSON.stringify({ choices: [{ delta: { content: streamContent } }] })}\n\n`),
+                )
+                streamContent = ""
+              }
+
               // Send a final [DONE] message to signal completion
               controller.enqueue(encoder.encode("data: [DONE]\n\n"))
               break
             }
 
-            // Decode the chunk and add it to our accumulated data
+            // Decode the chunk
             const chunk = decoder.decode(value, { stream: true })
-            accumulatedData += chunk
 
-            // Process any complete messages in the accumulated data
-            let match
-            const regex = /data: (.*?)(\n\n|$)/g
-
-            while ((match = regex.exec(accumulatedData)) !== null) {
-              const data = match[1]
-
-              if (data === "[DONE]") {
-                // End of stream from Eden AI
-                controller.enqueue(encoder.encode("data: [DONE]\n\n"))
-              } else {
+            // Process the chunk
+            const lines = chunk.split("\n")
+            for (const line of lines) {
+              if (line.startsWith("data:")) {
                 try {
-                  const parsed = JSON.parse(data)
+                  const jsonStr = line.replace(/^data: /, "").trim()
+                  if (jsonStr === "[DONE]") {
+                    continue // Skip Eden AI's DONE message, we'll send our own
+                  }
 
-                  if (parsed.openai && parsed.openai.generated_text) {
-                    // Format for AI SDK compatibility
-                    const aiSdkFormat = JSON.stringify({
-                      choices: [{ delta: { content: parsed.openai.generated_text } }],
-                    })
-                    controller.enqueue(encoder.encode(`data: ${aiSdkFormat}\n\n`))
+                  const data = JSON.parse(jsonStr)
+
+                  if (data.openai && data.openai.generated_text) {
+                    // Collect the content
+                    const text = data.openai.generated_text
+                    streamContent += text
+
+                    // Send the chunk to the client
+                    controller.enqueue(
+                      encoder.encode(`data: ${JSON.stringify({ choices: [{ delta: { content: text } }] })}\n\n`),
+                    )
                   }
                 } catch (e) {
-                  console.error("Error parsing JSON:", e)
+                  console.error("Error parsing JSON:", e, line)
                 }
               }
-
-              // Remove the processed message from accumulated data
-              accumulatedData = accumulatedData.substring(match.index + match[0].length)
-              regex.lastIndex = 0 // Reset regex index
             }
           }
 
