@@ -97,8 +97,8 @@ export async function initDatabase() {
   }
 }
 
-// Helper function to execute SQL queries
-export async function query(text: string, params: any[] = []) {
+// Helper function to execute SQL queries with better error handling
+export async function query(text: string, params = []) {
   try {
     // Use the sql template literal from @vercel/postgres
     const result = await sql.query(text, params)
@@ -109,9 +109,10 @@ export async function query(text: string, params: any[] = []) {
   }
 }
 
-// Chat session operations
+// Chat session operations with improved error handling
 export async function getChatSessions(userId: string) {
   try {
+    console.log("Getting chat sessions for user:", userId)
     const result = await sql`
       SELECT * FROM chat_sessions 
       WHERE user_id = ${userId} 
@@ -126,25 +127,18 @@ export async function getChatSessions(userId: string) {
 
 export async function getChatSession(id: string, userId: string) {
   try {
+    console.log("Getting chat session:", id, "for user:", userId)
     const result = await sql`
       SELECT * FROM chat_sessions 
       WHERE id = ${id} AND user_id = ${userId}
     `
 
     if (result.rows.length === 0) {
+      console.log("Chat session not found")
       return null
     }
 
-    const messagesResult = await sql`
-      SELECT * FROM messages 
-      WHERE chat_session_id = ${id} 
-      ORDER BY timestamp ASC
-    `
-
-    return {
-      ...result.rows[0],
-      messages: messagesResult.rows,
-    }
+    return result.rows[0]
   } catch (error) {
     console.error("Error fetching chat session:", error)
     throw error
@@ -153,6 +147,7 @@ export async function getChatSession(id: string, userId: string) {
 
 export async function createChatSession(name: string, userId: string, id: string) {
   try {
+    console.log("Creating chat session:", name, "for user:", userId, "with id:", id)
     const result = await sql`
       INSERT INTO chat_sessions (id, name, user_id, last_updated) 
       VALUES (${id}, ${name}, ${userId}, CURRENT_TIMESTAMP) 
@@ -203,6 +198,7 @@ export async function deleteChatSession(id: string, userId: string) {
 // Message operations
 export async function addMessage(chatSessionId: string, message: { id: string; role: string; content: string }) {
   try {
+    console.log("Adding message to chat session:", chatSessionId)
     // Add the message
     const result = await sql`
       INSERT INTO messages (id, role, content, chat_session_id) 
@@ -226,6 +222,7 @@ export async function addMessage(chatSessionId: string, message: { id: string; r
 
 export async function getMessages(chatSessionId: string) {
   try {
+    console.log("Getting messages for chat session:", chatSessionId)
     const result = await sql`
       SELECT * FROM messages 
       WHERE chat_session_id = ${chatSessionId} 
