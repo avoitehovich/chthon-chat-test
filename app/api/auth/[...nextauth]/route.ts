@@ -159,14 +159,20 @@ export const authOptions = {
         return true
       }
     },
-    async session({ session, user, token }) {
+    async session({ session }) {
       // Add user tier to session
       if (session.user?.email) {
-        const dbUser = await getUserByEmail(session.user.email)
-        if (dbUser) {
-          session.user.tier = dbUser.tier
-          session.user.id = dbUser.id
-        } else {
+        try {
+          const dbUser = await getUserByEmail(session.user.email)
+          if (dbUser) {
+            session.user.tier = dbUser.tier
+            session.user.id = dbUser.id
+          } else {
+            session.user.tier = "registered"
+          }
+        } catch (error) {
+          console.error("Error fetching user data for session:", error)
+          // Provide default tier if we can't fetch user data
           session.user.tier = "registered"
         }
       }
