@@ -1,29 +1,46 @@
 import { NextResponse } from "next/server"
 import type { NextRequest } from "next/server"
+import { getToken } from "next-auth/jwt"
 
-export function middleware(request: NextRequest) {
-  // Add CORS headers for API routes
-  if (request.nextUrl.pathname.startsWith("/api/")) {
-    const response = NextResponse.next()
-    response.headers.set("Access-Control-Allow-Origin", "*")
-    response.headers.set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-    response.headers.set("Access-Control-Allow-Headers", "Content-Type, Authorization")
-    return response
+export async function middleware(request: NextRequest) {
+  // Get the pathname
+  const path = request.nextUrl.pathname
+
+  // Define public paths that don't require authentication
+  const publicPaths = ["/", "/auth/signin", "/auth/error"]
+  const isPublicPath = publicPaths.some((pp) => path === pp || path.startsWith(`${pp}/`))
+
+  // Check if the path is for API routes
+  const isApiPath = path.startsWith("/api/")
+
+  // If it's a public path or API route, allow the request
+  if (isPublicPath || isApiPath) {
+    return NextResponse.next()
   }
 
+  // Get the token
+  const token = await getToken({ req: request })
+
+  // If there's no token and the path is not public, redirect to the landing page
+  if (!token) {
+    const url = new URL("/", request.url)
+    return NextResponse.redirect(url)
+  }
+
+  // Allow the request
   return NextResponse.next()
 }
 
-// See: https://nextjs.org/docs/app/building-your-application/routing/middleware#matcher
+// Configure the middleware to run on specific paths
 export const config = {
   matcher: [
     /*
-     * Match all request paths except for the ones starting with:
-     * - _next/static (static files)
-     * - _next/image (image optimization files)
-     * - favicon.ico (favicon file)
-     
-    "/((?!_next/static|_next/image|favicon.ico).*)",*/
+     * Match all paths except for:
+     * 1. /api routes
+     * 2. /_next (Next.js internals)
+     * 3. /_static (inside /public)
+     * 4. all root files inside /public (e.g. /favicon.ico)
+     */
+    "/((?!api|_next|_static|_vercel|[\\w-]+\\.\\w+).*)",
   ],
 }
-

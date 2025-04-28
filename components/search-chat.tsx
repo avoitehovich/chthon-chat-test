@@ -32,4 +32,3 @@ export function SearchChat({ onSearch }: SearchChatProps) {
     </div>
   )
 }
-

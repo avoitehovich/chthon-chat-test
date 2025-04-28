@@ -16,4 +16,3 @@ export function parseHTML(html: string): string {
     .replace(/&gt;/g, ">")
     .trim()
 }
-
