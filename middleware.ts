@@ -21,9 +21,10 @@ export async function middleware(request: NextRequest) {
   // Get the token
   const token = await getToken({ req: request })
 
-  // If there's no token and the path is not public, redirect to the landing page
+  // If there's no token and the path is not public, redirect to the sign-in page
   if (!token) {
-    const url = new URL("/", request.url)
+    const url = new URL("/auth/signin", request.url)
+    url.searchParams.set("callbackUrl", request.url)
     return NextResponse.redirect(url)
   }
 

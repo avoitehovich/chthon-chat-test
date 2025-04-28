@@ -1,6 +1,9 @@
 import { createClient } from "@supabase/supabase-js"
 import type { Database } from "@/types/supabase"
 
+// Re-export createClient for modules that need it directly
+export { createClient }
+
 // Create a single supabase client for the entire app
 let supabaseBrowser: ReturnType<typeof createClient> | null = null
 let supabaseServer: ReturnType<typeof createClient> | null = null

@@ -9,6 +9,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 
 export default function ErrorPage() {
   const [errorMessage, setErrorMessage] = useState<string>("")
+  const [errorDescription, setErrorDescription] = useState<string>("")
   const router = useRouter()
   const searchParams = useSearchParams()
 
@@ -17,15 +18,31 @@ export default function ErrorPage() {
 
     if (error === "google_account") {
       const email = searchParams.get("email") || ""
-      setErrorMessage(`This email (${email}) is already registered with Google. Please sign in with Google instead.`)
+      setErrorMessage(`Account Already Exists with Google`)
+      setErrorDescription(
+        `This email (${email}) is already registered with Google. Please sign in with Google instead.`,
+      )
     } else if (error === "Configuration") {
-      setErrorMessage("There is a problem with the server configuration. Please try again later.")
+      setErrorMessage("Server Configuration Error")
+      setErrorDescription("There is a problem with the server configuration. Please try again later.")
     } else if (error === "AccessDenied") {
-      setErrorMessage("Access denied. You do not have permission to sign in.")
+      setErrorMessage("Access Denied")
+      setErrorDescription("You do not have permission to sign in.")
     } else if (error === "Verification") {
-      setErrorMessage("The verification link may have expired or has already been used.")
+      setErrorMessage("Verification Failed")
+      setErrorDescription("The verification link may have expired or has already been used.")
+    } else if (error === "CredentialsSignin") {
+      setErrorMessage("Invalid Credentials")
+      setErrorDescription("The email or password you entered is incorrect. Please try again.")
+    } else if (error === "OAuthAccountNotLinked") {
+      setErrorMessage("Account Not Linked")
+      setErrorDescription("To confirm your identity, sign in with the same account you used originally.")
+    } else if (error === "SessionRequired") {
+      setErrorMessage("Authentication Required")
+      setErrorDescription("You must be signed in to access this page.")
     } else {
-      setErrorMessage("An error occurred during authentication. Please try again.")
+      setErrorMessage("Authentication Error")
+      setErrorDescription("An error occurred during authentication. Please try again.")
     }
   }, [searchParams])
 
@@ -42,8 +59,8 @@ export default function ErrorPage() {
 
         <Alert variant="destructive">
           <AlertCircle className="h-4 w-4" />
-          <AlertTitle>Error</AlertTitle>
-          <AlertDescription>{errorMessage}</AlertDescription>
+          <AlertTitle>{errorMessage}</AlertTitle>
+          <AlertDescription>{errorDescription}</AlertDescription>
         </Alert>
 
         <div className="mt-6 flex flex-col space-y-4">

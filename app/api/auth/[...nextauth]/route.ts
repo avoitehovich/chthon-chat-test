@@ -1,10 +1,10 @@
-import type { NextAuthOptions } from "next-auth"
+import NextAuth from "next-auth"
 import GoogleProvider from "next-auth/providers/google"
 import CredentialsProvider from "next-auth/providers/credentials"
 import { getUserByEmail, createUser, updateUser, verifyPassword, hashPassword } from "@/utils/user-service"
 import crypto from "crypto"
 
-export const authOptions: NextAuthOptions = {
+export const authOptions = {
   providers: [
     GoogleProvider({
       clientId: process.env.GOOGLE_CLIENT_ID!,
@@ -104,7 +104,7 @@ export const authOptions: NextAuthOptions = {
     }),
   ],
   callbacks: {
-    async signIn({ user, account, profile, email, credentials }) {
+    async signIn({ user, account, profile }) {
       if (!user.email) {
         console.error("No email provided")
         return false
@@ -179,3 +179,7 @@ export const authOptions: NextAuthOptions = {
     error: "/auth/error",
   },
 }
+
+const handler = NextAuth(authOptions)
+
+export { handler as GET, handler as POST }

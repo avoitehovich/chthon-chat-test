@@ -3,7 +3,7 @@
 import type React from "react"
 
 import { signIn } from "next-auth/react"
-import { useState, useEffect } from "react"
+import { useState } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import Link from "next/link"
 import { MessageSquare, AlertCircle } from "lucide-react"
@@ -25,15 +25,13 @@ export default function SignIn() {
   const searchParams = useSearchParams()
 
   // Get error and email from URL if present
-  useEffect(() => {
-    const errorParam = searchParams.get("error")
-    const emailParam = searchParams.get("email")
+  const errorParam = searchParams.get("error")
+  const emailParam = searchParams.get("email")
 
-    if (errorParam === "google_account" && emailParam) {
-      setError(`This email (${emailParam}) is already registered with Google. Please sign in with Google instead.`)
-      setEmail(emailParam)
-    }
-  }, [searchParams])
+  if (errorParam === "google_account" && emailParam && !error) {
+    setError(`This email (${emailParam}) is already registered with Google. Please sign in with Google instead.`)
+    setEmail(emailParam)
+  }
 
   const handleGoogleSignIn = async () => {
     setIsLoading(true)

@@ -66,9 +66,9 @@
     "fs": "latest",
     "path": "latest",
     "@vercel/blob": "latest",
-    "@supabase/supabase-js": "latest",
+    "crypto": "latest",
     "bcryptjs": "latest",
-    "crypto": "latest"
+    "@supabase/supabase-js": "latest"
   },
   "devDependencies": {
     "@types/node": "^22",
