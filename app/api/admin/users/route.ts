@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server"
-import { getSupabaseServer } from "@/lib/supabase"
+import { prisma } from "@/lib/db"
 
 export async function GET(req: Request) {
   try {
@@ -18,18 +18,12 @@ export async function GET(req: Request) {
       return NextResponse.json({ error: "Invalid authorization token" }, { status: 401 })
     }
 
-    // Initialize Supabase client
-    const supabase = getSupabaseServer()
+    // Fetch users from database
+    const users = await prisma.user.findMany({
+      orderBy: { createdAt: "desc" },
+    })
 
-    // Fetch users from Supabase
-    const { data: users, error } = await supabase.from("users").select("*").order("created_at", { ascending: false })
-
-    if (error) {
-      console.error("Error fetching users:", error)
-      return NextResponse.json({ error: "Failed to fetch users" }, { status: 500 })
-    }
-
-    // If Supabase is not set up yet, fall back to the file-based storage
+    // If database is not set up yet, fall back to the file-based storage
     if (!users || users.length === 0) {
       // Import the file-based user service
       const { getAllUsers } = await import("@/utils/user-service")

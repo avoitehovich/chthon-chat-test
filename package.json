@@ -60,15 +60,18 @@
     "zod": "^3.24.1",
     "@auth/core": "latest",
     "nodemailer": "latest",
+    "prisma": "latest",
     "ai": "latest",
     "dompurify": "latest",
     "next-auth": "latest",
     "fs": "latest",
     "path": "latest",
     "@vercel/blob": "latest",
+    "@supabase/supabase-js": "latest",
     "crypto": "latest",
-    "bcryptjs": "latest",
-    "@supabase/supabase-js": "latest"
+    "child_process": "latest",
+    "util": "latest",
+    "@prisma/client": "latest"
   },
   "devDependencies": {
     "@types/node": "^22",

@@ -5,7 +5,6 @@ export interface User {
   email: string
   name: string
   image?: string
-  password?: string // Optional for Google auth users
   tier: UserTier
   tierConfig?: {
     maxTokens: number

@@ -1,0 +1,9 @@
+{
+  "buildCommand": "npx prisma generate && next build",
+  "installCommand": "npm install --legacy-peer-deps",
+  "framework": "nextjs",
+  "env": {
+    "DATABASE_URL": "@chthon_postgres_prisma_url",
+    "DIRECT_URL": "@chthon_postgres_url_non_pooling"
+  }
+}
