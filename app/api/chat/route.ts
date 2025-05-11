@@ -122,24 +122,24 @@ export async function POST(req: Request) {
     }
 
     // Determine provider based on tier
-    let effectiveProvider
+    let effectiveModel
 
     if (hasImage) {
-      // For images, always use google
-      effectiveProvider = "google"
-      console.log("[CHAT] Using Google provider for image analysis")
+      // For images, use google or openai (both support vision)
+      effectiveModel = "google"
+      console.log("[CHAT] Using Google model for image analysis")
     } else if (!userTierLimits.canSelectProvider) {
       // For freemium, use the cheapest provider (openai in this case)
-      effectiveProvider = userTierLimits.availableProviders[0]
-      console.log("[CHAT] User cannot select provider, using:", effectiveProvider)
+      effectiveModel = userTierLimits.availableProviders[0]
+      console.log("[CHAT] User cannot select provider, using:", effectiveModel)
     } else {
       // Check if the selected provider is available for this tier
       if (!userTierLimits.availableProviders.includes(provider)) {
-        effectiveProvider = userTierLimits.availableProviders[0]
-        console.log("[CHAT] Selected provider not available for tier, using:", effectiveProvider)
+        effectiveModel = userTierLimits.availableProviders[0]
+        console.log("[CHAT] Selected provider not available for tier, using:", effectiveModel)
       } else {
-        effectiveProvider = provider
-        console.log("[CHAT] Using selected provider:", effectiveProvider)
+        effectiveModel = provider
+        console.log("[CHAT] Using selected provider:", effectiveModel)
       }
     }
 
@@ -148,11 +148,9 @@ export async function POST(req: Request) {
       userTierLimits.maxTokens,
       {
         openai: 4000,
-        deepseek: 4000,
-        amazon: 3000,
-        xai: 4000,
         google: 4000,
-      }[effectiveProvider] || 4000,
+        grok: 4000,
+      }[effectiveModel] || 4000,
     )
 
     console.log("[CHAT] Using max tokens:", maxTokens)
@@ -161,19 +159,13 @@ export async function POST(req: Request) {
     const truncatedMessages = truncateConversation(messages, maxTokens, true)
     console.log("[CHAT] Truncated message count:", truncatedMessages.length)
 
-    // Format the conversation history for Eden AI
-    const history = truncatedMessages.slice(0, -1).map((m) => ({
-      role: m.role === "user" ? "user" : "assistant",
-      message: m.content,
-    }))
-
     try {
       let responseData
       const startTime = Date.now()
 
       // Create analytics data object
       const analyticsData = {
-        provider: effectiveProvider,
+        provider: effectiveModel,
         type: hasImage ? "image" : "text",
         timestamp: new Date().toISOString(),
         cost: 0,
@@ -189,423 +181,212 @@ export async function POST(req: Request) {
         responseSize: 0,
       }
 
-      if (hasImage) {
-        console.log(`[CHAT] Processing image analysis request using provider: google`)
+      // Format messages for the new unified API
+      const formattedMessages = truncatedMessages.map((msg) => {
+        if (msg.role === "user" && msg.imageUrl) {
+          // Message with image
+          return {
+            role: "user",
+            content: [
+              { type: "text", text: msg.content || "What can you tell me about this image?" },
+              {
+                type: "image_url",
+                image_url: {
+                  url: msg.imageUrl,
+                },
+              },
+            ],
+          }
+        } else {
+          // Regular text message
+          return {
+            role: msg.role,
+            content: msg.content,
+          }
+        }
+      })
 
-        // Validate the image URL
-        if (!lastMessage.imageUrl.startsWith("http")) {
-          console.error(
-            "[CHAT] Invalid image URL format:",
-            lastMessage.imageUrl.substring(0, Math.min(30, lastMessage.imageUrl.length)) + "...",
-          )
-          return NextResponse.json(
-            { error: "Invalid image URL. Image URL must be a publicly accessible HTTP URL." },
-            { status: 400 },
-          )
+      // Add system message if not present
+      if (!formattedMessages.some((msg) => msg.role === "system")) {
+        formattedMessages.unshift({
+          role: "system",
+          content:
+            "You are a helpful AI assistant. When listing items, use simple bullet points (•) for list items and avoid using special characters like ### or **. Format categories with a colon at the end. Keep it brief, no more than 500 tokens.",
+        })
+      }
+
+      // Check if Eden AI API key is available
+      if (!process.env.EDEN_AI_API_KEY) {
+        console.error("[CHAT] Missing EDEN_AI_API_KEY environment variable")
+        throw new Error("Server configuration error: Missing API key")
+      }
+
+      console.log("[CHAT] Sending request to Eden AI unified chat API")
+      const chatResponse = await fetch("https://api.edenai.run/v2/llm/chat", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${process.env.EDEN_AI_API_KEY}`,
+        },
+        body: JSON.stringify({
+          model: effectiveModel,
+          messages: formattedMessages,
+          temperature: 0.7,
+          max_tokens: maxTokens,
+          fallback_model: "openai", // Fallback to OpenAI if the selected model fails
+        }),
+      })
+
+      console.log("[CHAT] Eden AI unified API response status:", chatResponse.status)
+
+      if (!chatResponse.ok) {
+        let errorData
+        let errorText
+
+        try {
+          // Try to get the response as text first
+          errorText = await chatResponse.text()
+          console.log("[CHAT] Eden AI error response text:", errorText)
+
+          // Then try to parse it as JSON
+          try {
+            errorData = JSON.parse(errorText)
+            console.log("[CHAT] Eden AI error parsed as JSON:", JSON.stringify(errorData))
+          } catch (jsonError) {
+            console.error("[CHAT] Could not parse error response as JSON:", jsonError)
+            errorData = { error: "Could not parse error response" }
+          }
+        } catch (textError) {
+          console.error("[CHAT] Could not get error response text:", textError)
+          errorData = { error: chatResponse.statusText }
         }
 
-        // Call the image question answering API
+        // Save analytics with error
+        analyticsData.error = typeof errorData === "object" ? JSON.stringify(errorData) : String(errorData)
+        analyticsData.processingTime = Date.now() - startTime
+        analyticsData.responseTime = Date.now() - startTime
+        await saveAnalytics(analyticsData)
+
+        // Provide a more detailed error message
+        let errorMessage = "Error from Eden AI Chat API"
+        if (errorData.error) {
+          errorMessage += `: ${errorData.error}`
+        } else if (errorData.message) {
+          errorMessage += `: ${errorData.message}`
+        }
+
+        console.error("[CHAT] Chat API error:", errorMessage)
+        return NextResponse.json({ error: errorMessage }, { status: chatResponse.status })
+      }
+
+      let chatData
+      let responseText
+
+      try {
+        // First get the raw text
+        responseText = await chatResponse.text()
+        console.log("[CHAT] Eden AI chat response text length:", responseText.length)
+
+        // Then parse as JSON
         try {
-          // Sanitize and validate the image URL
-          const imageUrl = lastMessage.imageUrl.trim()
-          console.log("[CHAT] Sanitized image URL:", imageUrl.substring(0, Math.min(50, imageUrl.length)) + "...")
-
-          // Check if Eden AI API key is available
-          if (!process.env.EDEN_AI_API_KEY) {
-            console.error("[CHAT] Missing EDEN_AI_API_KEY environment variable")
-            throw new Error("Server configuration error: Missing API key")
-          }
-
-          console.log("[CHAT] Sending request to Eden AI image API")
-          if (!process.env.EDEN_AI_API_KEY) {
-            console.error("[CHAT] Missing EDEN_AI_API_KEY environment variable")
-            throw new Error("Server configuration error: Missing API key")
-          }
-
-          console.log("[CHAT] Sending request to Eden AI image API")
-          const imageResponse = await fetch("https://api.edenai.run/v2/image/question_answer", {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              Authorization: `Bearer ${process.env.EDEN_AI_API_KEY}`,
-            },
-            body: JSON.stringify({
-              providers: "google",
-              file_url: imageUrl,
-              question: lastMessage.content || "What can you tell me about this image?",
-            }),
-          })
-
-          console.log("[CHAT] Eden AI image API response status:", imageResponse.status)
-
-          if (!imageResponse.ok) {
-            let errorData
-            let errorText
-
-            try {
-              // Try to get the response as text first
-              errorText = await imageResponse.text()
-              console.log("[CHAT] Eden AI error response text:", errorText)
-
-              // Then try to parse it as JSON
-              try {
-                errorData = JSON.parse(errorText)
-                console.log("[CHAT] Eden AI error parsed as JSON:", JSON.stringify(errorData))
-              } catch (jsonError) {
-                console.error("[CHAT] Could not parse error response as JSON:", jsonError)
-                errorData = { error: "Could not parse error response" }
-              }
-            } catch (textError) {
-              console.error("[CHAT] Could not get error response text:", textError)
-              errorData = { error: imageResponse.statusText }
-            }
-
-            // Save analytics with error
-            analyticsData.error = typeof errorData === "object" ? JSON.stringify(errorData) : String(errorData)
-            analyticsData.processingTime = Date.now() - startTime
-            analyticsData.responseTime = Date.now() - startTime
-            await saveAnalytics(analyticsData)
-
-            // Provide a more detailed error message
-            let errorMessage = "Error from Eden AI Image API"
-            if (errorData.error) {
-              errorMessage += `: ${errorData.error}`
-            } else if (errorData.message) {
-              errorMessage += `: ${errorData.message}`
-            }
-
-            console.error("[CHAT] Image API error:", errorMessage)
-            return NextResponse.json({ error: errorMessage }, { status: imageResponse.status })
-          }
-
-          let imageData
-          let responseText
-
-          try {
-            // First get the raw text
-            responseText = await imageResponse.text()
-            console.log("[CHAT] Eden AI image response text length:", responseText.length)
-
-            // Then parse as JSON
-            try {
-              imageData = JSON.parse(responseText)
-              console.log("[CHAT] Eden AI image response parsed successfully")
-            } catch (jsonError) {
-              console.error("[CHAT] Error parsing image API JSON response:", jsonError)
-              console.error(
-                "[CHAT] Response text sample:",
-                responseText.substring(0, Math.min(200, responseText.length)) + "...",
-              )
-
-              throw new Error(`JSON parse error: ${jsonError.message}`)
-            }
-          } catch (responseError) {
-            console.error("[CHAT] Error getting image API response:", responseError)
-
-            // Save analytics with error
-            analyticsData.error = `Response error: ${responseError.message}`
-            analyticsData.processingTime = Date.now() - startTime
-            analyticsData.responseTime = Date.now() - startTime
-            await saveAnalytics(analyticsData)
-
-            return NextResponse.json(
-              {
-                error: "Error processing response from image API",
-              },
-              { status: 500 },
-            )
-          }
-
-          // Extract the answer from the provider's response
-          const providerImageResponse = imageData.google
-          console.log(
-            "[CHAT] Provider image response status:",
-            providerImageResponse ? providerImageResponse.status : "undefined",
+          chatData = JSON.parse(responseText)
+          console.log("[CHAT] Eden AI chat response parsed successfully")
+        } catch (jsonError) {
+          console.error("[CHAT] Error parsing chat API JSON response:", jsonError)
+          console.error(
+            "[CHAT] Response text sample:",
+            responseText.substring(0, Math.min(200, responseText.length)) + "...",
           )
 
-          // Save analytics data
-          analyticsData.success = true
-          analyticsData.processingTime = Date.now() - startTime
-          analyticsData.responseTime = Date.now() - startTime
-          analyticsData.responseSize = responseText.length
+          throw new Error(`JSON parse error: ${jsonError.message}`)
+        }
+      } catch (responseError) {
+        console.error("[CHAT] Error getting chat API response:", responseError)
 
-          // Extract cost and tokens if available
-          if (providerImageResponse && providerImageResponse.status === "success") {
-            analyticsData.cost = imageData.cost || 0
-            analyticsData.tokens = imageData.tokens_used || 0
+        // Save analytics with error
+        analyticsData.error = `Response error: ${responseError.message}`
+        analyticsData.processingTime = Date.now() - startTime
+        analyticsData.responseTime = Date.now() - startTime
+        await saveAnalytics(analyticsData)
 
-            // Store provider-specific details
-            analyticsData.providerDetails = {
-              google: {
-                cost: imageData.cost || 0,
-                tokens: imageData.tokens_used || 0,
-                processingTime: providerImageResponse.processing_time || 0,
-                model: providerImageResponse.model || "unknown",
-              },
-            }
+        return NextResponse.json(
+          {
+            error: "Error processing response from chat API",
+          },
+          { status: 500 },
+        )
+      }
 
-            console.log("[CHAT] Image analysis cost:", analyticsData.cost, "tokens:", analyticsData.tokens)
-            console.log("[CHAT] Image analysis processing time:", providerImageResponse.processing_time || "unknown")
-          }
+      // Save analytics data
+      analyticsData.success = true
+      analyticsData.processingTime = Date.now() - startTime
+      analyticsData.responseTime = Date.now() - startTime
+      analyticsData.cost = chatData.cost || 0
+      analyticsData.tokens = chatData.tokens_used || 0
+      analyticsData.responseSize = responseText.length
 
-          await saveAnalytics(analyticsData)
+      // Store provider-specific details
+      analyticsData.providerDetails = {}
+      if (chatData.usage) {
+        analyticsData.providerDetails[effectiveModel] = {
+          cost: chatData.cost || 0,
+          tokens: chatData.tokens_used || 0,
+          processingTime: chatData.processing_time || 0,
+          model: chatData.model || "unknown",
+          promptTokens: chatData.usage.prompt_tokens || 0,
+          completionTokens: chatData.usage.completion_tokens || 0,
+          totalTokens: chatData.usage.total_tokens || 0,
+        }
 
-          if (!providerImageResponse || providerImageResponse.status !== "success") {
-            const errorDetail = providerImageResponse?.error || "Unknown error"
-            console.error(`[CHAT] No valid response from image analysis: ${errorDetail}`)
+        // Update the main analytics data with the most accurate token counts
+        if (chatData.usage.total_tokens) {
+          analyticsData.tokens = chatData.usage.total_tokens
+        }
+      }
 
-            // Return a fallback message for empty responses
-            responseData = {
-              role: "assistant",
-              content:
-                "No response was generated from API. The image might not be processable or the service might be temporarily unavailable.",
-            }
-          } else {
-            // Get the first answer or join multiple answers if available
-            let answer
+      console.log("[CHAT] Chat cost:", analyticsData.cost, "tokens:", analyticsData.tokens)
+      console.log("[CHAT] Chat processing time:", chatData.processing_time || "unknown")
+      if (chatData.usage) {
+        console.log("[CHAT] Token usage:", JSON.stringify(chatData.usage))
+      }
+      await saveAnalytics(analyticsData)
 
-            if (Array.isArray(providerImageResponse.answers)) {
-              console.log("[CHAT] Multiple answers received, count:", providerImageResponse.answers.length)
-              answer = providerImageResponse.answers.join("\n\n")
-            } else {
-              console.log("[CHAT] Single answer received")
-              answer = providerImageResponse.answers
-            }
+      // Get the response content
+      if (!chatData.generated_text && !chatData.message) {
+        console.error("[CHAT] No response content from API")
+        return NextResponse.json({
+          role: "assistant",
+          content: "No response was generated from API. The provider might be temporarily unavailable.",
+        })
+      }
 
-            if (!answer || answer.trim() === "") {
-              console.log("[CHAT] Empty answer received from provider")
-              responseData = {
-                role: "assistant",
-                content: "No response was generated from API. The image might not contain recognizable content.",
-              }
-            } else {
-              console.log("[CHAT] Answer length:", answer.length)
-              responseData = {
-                role: "assistant",
-                content: answer,
-              }
-            }
-          }
-        } catch (error) {
-          console.error("[CHAT] Error calling Eden AI image API:", error)
-          console.error("[CHAT] Error details:", error instanceof Error ? error.stack : String(error))
+      // Clean up the response text (use message.content for new API or generated_text for backward compatibility)
+      const responseContent = chatData.message?.content || chatData.generated_text || ""
+      const cleanedText = responseContent
+        // Remove ### markers
+        .replace(/###\s*/g, "")
+        // Remove ** markers
+        .replace(/\*\*/g, "")
+        // Ensure consistent bullet points
+        .replace(/^[-*]\s*/gm, "• ")
+        // Add newlines before categories
+        .replace(/([A-Za-z]+\s+Activities:)/g, "\n$1")
+        // Remove extra newlines
+        .replace(/\n{3,}/g, "\n\n")
+        .trim()
 
-          // Save analytics with error
-          analyticsData.error = error instanceof Error ? error.message : "Unknown error"
-          analyticsData.processingTime = Date.now() - startTime
-          analyticsData.responseTime = Date.now() - startTime
-          await saveAnalytics(analyticsData)
+      console.log("[CHAT] Cleaned text length:", cleanedText.length)
 
-          return NextResponse.json(
-            { error: `Failed to process image: ${error instanceof Error ? error.message : "Unknown error"}` },
-            { status: 500 },
-          )
+      if (!cleanedText || cleanedText.trim() === "") {
+        console.log("[CHAT] Empty response from provider")
+        responseData = {
+          role: "assistant",
+          content: "No response was generated from API. Please try again with a different query.",
         }
       } else {
-        // Call the text chat API (no image)
-        try {
-          // Sanitize the input text to ensure it's properly encoded
-          const sanitizedText = lastMessage.content
-          console.log("[CHAT] Sanitized text length:", sanitizedText.length)
-
-          // Check if Eden AI API key is available
-          if (!process.env.EDEN_AI_API_KEY) {
-            console.error("[CHAT] Missing EDEN_AI_API_KEY environment variable")
-            throw new Error("Server configuration error: Missing API key")
-          }
-
-          console.log("[CHAT] Sending request to Eden AI chat API")
-          const chatResponse = await fetch("https://api.edenai.run/v2/text/chat", {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              Authorization: `Bearer ${process.env.EDEN_AI_API_KEY}`,
-            },
-            body: JSON.stringify({
-              providers: effectiveProvider,
-              text: sanitizedText,
-              chatbot_global_action:
-                "You are a helpful AI assistant. When listing items, use simple bullet points (•) for list items and avoid using special characters like ### or **. Format categories with a colon at the end. Keep it brief, no more than 500 tokens.",
-              previous_history: history,
-              temperature: 0.7,
-              max_tokens: maxTokens, // Apply tier token limit
-              fallback_providers: "",
-            }),
-          })
-
-          console.log("[CHAT] Eden AI chat API response status:", chatResponse.status)
-
-          if (!chatResponse.ok) {
-            let errorData
-            let errorText
-
-            try {
-              // Try to get the response as text first
-              errorText = await chatResponse.text()
-              console.log("[CHAT] Eden AI error response text:", errorText)
-
-              // Then try to parse it as JSON
-              try {
-                errorData = JSON.parse(errorText)
-                console.log("[CHAT] Eden AI error parsed as JSON:", JSON.stringify(errorData))
-              } catch (jsonError) {
-                console.error("[CHAT] Could not parse error response as JSON:", jsonError)
-                errorData = { error: "Could not parse error response" }
-              }
-            } catch (textError) {
-              console.error("[CHAT] Could not get error response text:", textError)
-              errorData = { error: chatResponse.statusText }
-            }
-
-            // Save analytics with error
-            analyticsData.error = typeof errorData === "object" ? JSON.stringify(errorData) : String(errorData)
-            analyticsData.processingTime = Date.now() - startTime
-            analyticsData.responseTime = Date.now() - startTime
-            await saveAnalytics(analyticsData)
-
-            // Provide a more detailed error message
-            let errorMessage = "Error from Eden AI Chat API"
-            if (errorData.error) {
-              errorMessage += `: ${errorData.error}`
-            } else if (errorData.message) {
-              errorMessage += `: ${errorData.message}`
-            }
-
-            console.error("[CHAT] Chat API error:", errorMessage)
-            return NextResponse.json({ error: errorMessage }, { status: chatResponse.status })
-          }
-
-          let chatData
-          let responseText
-
-          try {
-            // First get the raw text
-            responseText = await chatResponse.text()
-            console.log("[CHAT] Eden AI chat response text length:", responseText.length)
-
-            // Then parse as JSON
-            try {
-              chatData = JSON.parse(responseText)
-              console.log("[CHAT] Eden AI chat response parsed successfully")
-            } catch (jsonError) {
-              console.error("[CHAT] Error parsing chat API JSON response:", jsonError)
-              console.error(
-                "[CHAT] Response text sample:",
-                responseText.substring(0, Math.min(200, responseText.length)) + "...",
-              )
-
-              throw new Error(`JSON parse error: ${jsonError.message}`)
-            }
-          } catch (responseError) {
-            console.error("[CHAT] Error getting chat API response:", responseError)
-
-            // Save analytics with error
-            analyticsData.error = `Response error: ${responseError.message}`
-            analyticsData.processingTime = Date.now() - startTime
-            analyticsData.responseTime = Date.now() - startTime
-            await saveAnalytics(analyticsData)
-
-            return NextResponse.json(
-              {
-                error: "Error processing response from chat API",
-              },
-              { status: 500 },
-            )
-          }
-
-          // Save analytics data
-          analyticsData.success = true
-          analyticsData.processingTime = Date.now() - startTime
-          analyticsData.responseTime = Date.now() - startTime
-          analyticsData.cost = chatData.cost || 0
-          analyticsData.tokens = chatData.tokens_used || 0
-          analyticsData.responseSize = responseText.length
-
-          // Store provider-specific details
-          analyticsData.providerDetails = {}
-          if (chatData[effectiveProvider]) {
-            const providerResponse = chatData[effectiveProvider]
-            const usage = providerResponse.usage || {}
-
-            analyticsData.providerDetails[effectiveProvider] = {
-              cost: chatData.cost || 0,
-              tokens: chatData.tokens_used || 0,
-              processingTime: providerResponse.processing_time || 0,
-              model: providerResponse.model || "unknown",
-              promptTokens: usage.prompt_tokens || 0,
-              completionTokens: usage.completion_tokens || 0,
-              totalTokens: usage.total_tokens || 0,
-              // Add detailed token breakdowns if available
-              completionTokensDetails: usage.completion_tokens_details || null,
-              promptTokensDetails: usage.prompt_tokens_details || null,
-            }
-
-            // Update the main analytics data with the most accurate token counts
-            if (usage.total_tokens) {
-              analyticsData.tokens = usage.total_tokens
-            }
-          }
-
-          console.log("[CHAT] Chat cost:", analyticsData.cost, "tokens:", analyticsData.tokens)
-          console.log("[CHAT] Chat processing time:", chatData[effectiveProvider]?.processing_time || "unknown")
-          if (chatData[effectiveProvider]?.usage) {
-            console.log("[CHAT] Token usage:", JSON.stringify(chatData[effectiveProvider].usage))
-          }
-          await saveAnalytics(analyticsData)
-
-          // Get the response from the selected provider
-          const providerChatResponse = chatData[effectiveProvider]
-
-          if (!providerChatResponse) {
-            console.error("[CHAT] No response from provider:", effectiveProvider)
-            return NextResponse.json({
-              role: "assistant",
-              content: "No response was generated from API. The provider might be temporarily unavailable.",
-            })
-          }
-
-          // Clean up the response text
-          const cleanedText = providerChatResponse.generated_text
-            // Remove ### markers
-            .replace(/###\s*/g, "")
-            // Remove ** markers
-            .replace(/\*\*/g, "")
-            // Ensure consistent bullet points
-            .replace(/^[-*]\s*/gm, "• ")
-            // Add newlines before categories
-            .replace(/([A-Za-z]+\s+Activities:)/g, "\n$1")
-            // Remove extra newlines
-            .replace(/\n{3,}/g, "\n\n")
-            .trim()
-
-          console.log("[CHAT] Cleaned text length:", cleanedText.length)
-
-          if (!cleanedText || cleanedText.trim() === "") {
-            console.log("[CHAT] Empty response from provider")
-            responseData = {
-              role: "assistant",
-              content: "No response was generated from API. Please try again with a different query.",
-            }
-          } else {
-            responseData = {
-              role: "assistant",
-              content: cleanedText,
-            }
-          }
-        } catch (error) {
-          console.error("[CHAT] Error calling Eden AI chat API:", error)
-          console.error("[CHAT] Error details:", error instanceof Error ? error.stack : String(error))
-
-          // Save analytics with error
-          analyticsData.error = error instanceof Error ? error.message : "Unknown error"
-          analyticsData.processingTime = Date.now() - startTime
-          analyticsData.responseTime = Date.now() - startTime
-          await saveAnalytics(analyticsData)
-
-          return NextResponse.json(
-            { error: `Failed to process chat: ${error instanceof Error ? error.message : "Unknown error"}` },
-            { status: 500 },
-          )
+        responseData = {
+          role: "assistant",
+          content: cleanedText,
         }
       }
 
