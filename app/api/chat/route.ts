@@ -149,7 +149,7 @@ export async function POST(req: Request) {
       {
         "openai/gpt-4o-mini": 4000,
         "google/gemini-1.5-flash": 4000,
-        "xai/grok-2-latest": 4000,
+        "grok-2-vision-1212": 4000,
       }[effectiveModel] || 4000,
     )
 
