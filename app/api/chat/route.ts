@@ -71,7 +71,7 @@ export async function POST(req: Request) {
 
       const body = JSON.parse(text)
       messages = body.messages || []
-      provider = body.provider || "openai"
+      provider = body.provider || "openai/gpt-4o-mini"
 
       console.log("[CHAT] Parsed request body successfully. Provider:", provider)
       console.log("[CHAT] Message count:", messages.length)
@@ -126,7 +126,7 @@ export async function POST(req: Request) {
 
     if (hasImage) {
       // For images, use google or openai (both support vision)
-      effectiveModel = "google"
+      effectiveModel = "google/gemini-1.5-flash"
       console.log("[CHAT] Using Google model for image analysis")
     } else if (!userTierLimits.canSelectProvider) {
       // For freemium, use the cheapest provider (openai in this case)
@@ -322,37 +322,51 @@ export async function POST(req: Request) {
       analyticsData.processingTime = Date.now() - startTime
       analyticsData.responseTime = Date.now() - startTime
       analyticsData.cost = chatData.cost || 0
-      analyticsData.tokens = chatData.tokens_used || 0
+      analyticsData.tokens = chatData.usage?.total_tokens || 0
       analyticsData.responseSize = responseText.length
 
-      // Store provider-specific details
-      analyticsData.providerDetails = {}
-      if (chatData.usage) {
-        analyticsData.providerDetails[effectiveModel] = {
-          cost: chatData.cost || 0,
-          tokens: chatData.tokens_used || 0,
-          processingTime: chatData.processing_time || 0,
-          model: chatData.model || "unknown",
-          promptTokens: chatData.usage.prompt_tokens || 0,
-          completionTokens: chatData.usage.completion_tokens || 0,
-          totalTokens: chatData.usage.total_tokens || 0,
-        }
+      // Extract the model name from the response
+      const actualModel = chatData.model || effectiveModel
 
-        // Update the main analytics data with the most accurate token counts
-        if (chatData.usage.total_tokens) {
-          analyticsData.tokens = chatData.usage.total_tokens
-        }
+      // Store provider-specific details with all available information
+      const providerName = actualModel.split("/")[0] || "unknown"
+      analyticsData.providerDetails[providerName] = {
+        cost: chatData.cost || 0,
+        tokens: chatData.usage?.total_tokens || 0,
+        processingTime: chatData.provider_time ? chatData.provider_time / 1000000 : 0, // Convert nanoseconds to milliseconds
+        model: actualModel,
+        promptTokens: chatData.usage?.prompt_tokens || 0,
+        completionTokens: chatData.usage?.completion_tokens || 0,
+        totalTokens: chatData.usage?.total_tokens || 0,
+        // Add detailed token breakdowns if available
+        completionTokensDetails: chatData.usage?.completion_tokens_details || null,
+        promptTokensDetails: chatData.usage?.prompt_tokens_details || null,
+        serviceTier: chatData.service_tier || "default",
+        id: chatData.id || null,
+        created: chatData.created || null,
+        systemFingerprint: chatData.system_fingerprint || null,
+        object: chatData.object || null,
+        finishReason: chatData.choices?.[0]?.finish_reason || null,
+      }
+
+      // Update the main analytics data with the most accurate token counts
+      if (chatData.usage?.total_tokens) {
+        analyticsData.tokens = chatData.usage.total_tokens
       }
 
       console.log("[CHAT] Chat cost:", analyticsData.cost, "tokens:", analyticsData.tokens)
-      console.log("[CHAT] Chat processing time:", chatData.processing_time || "unknown")
+      console.log(
+        "[CHAT] Chat processing time:",
+        chatData.provider_time ? chatData.provider_time / 1000000 : "unknown",
+        "ms",
+      )
       if (chatData.usage) {
         console.log("[CHAT] Token usage:", JSON.stringify(chatData.usage))
       }
       await saveAnalytics(analyticsData)
 
-      // Get the response content
-      if (!chatData.generated_text && !chatData.message) {
+      // Get the response content from the choices array
+      if (!chatData.choices || !chatData.choices[0]?.message?.content) {
         console.error("[CHAT] No response content from API")
         return NextResponse.json({
           role: "assistant",
@@ -360,8 +374,8 @@ export async function POST(req: Request) {
         })
       }
 
-      // Clean up the response text (use message.content for new API or generated_text for backward compatibility)
-      const responseContent = chatData.message?.content || chatData.generated_text || ""
+      // Clean up the response text
+      const responseContent = chatData.choices[0].message.content
       const cleanedText = responseContent
         // Remove ### markers
         .replace(/###\s*/g, "")

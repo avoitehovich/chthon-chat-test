@@ -35,6 +35,12 @@ export interface AnalyticsData {
         audio_tokens?: number
         cached_tokens?: number
       }
+      serviceTier?: string
+      id?: string
+      created?: number
+      systemFingerprint?: string
+      object?: string
+      finishReason?: string
     }
   }
   responseTime?: number
