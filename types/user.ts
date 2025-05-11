@@ -27,7 +27,7 @@ export const tierLimits = {
     maxTokens: 1500,
     canSelectProvider: true,
     canUploadImages: true,
-    availableProviders: ["openai/gpt-4o-mini", "google/gemini-1.5-flash", "xai/grok-2-vision-latest"],
+    availableProviders: ["openai/gpt-4o-mini", "google/gemini-1.5-flash", "xai/grok-2-latest"],
   },
   // Custom tier will use the tierConfig from the user object
   custom: {
