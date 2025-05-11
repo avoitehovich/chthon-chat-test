@@ -17,7 +17,7 @@ const allProviders = [
     shortName: "Google",
   },
   {
-    value: "xai/grok-2-vision-latest",
+    value: "xai/grok-2-latest",
     label: "Grok (Premium)",
     shortName: "Grok",
   },
