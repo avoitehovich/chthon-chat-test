@@ -71,9 +71,10 @@ export async function POST(req: Request) {
 
       const body = JSON.parse(text)
       messages = body.messages || []
-      provider = body.provider || "openai/gpt-4o-mini"
+      // Accept either 'model' or 'provider' for backward compatibility
+      provider = body.model || body.provider || "openai/gpt-4o-mini"
 
-      console.log("[CHAT] Parsed request body successfully. Provider:", provider)
+      console.log("[CHAT] Parsed request body successfully. Model/Provider:", provider)
       console.log("[CHAT] Message count:", messages.length)
     } catch (parseError) {
       console.error("[CHAT] Error parsing request JSON:", parseError)

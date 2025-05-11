@@ -39,12 +39,13 @@ export function ProviderSelector({
   // Filter providers based on available ones
   const providers = allProviders.filter((p) => availableProviders.includes(p.value))
 
-  // Load saved provider from localStorage on initial render
+  // Load saved model from localStorage on initial render
   useEffect(() => {
-    const savedProvider = localStorage.getItem("selectedProvider")
-    if (savedProvider && availableProviders.includes(savedProvider)) {
-      setValue(savedProvider)
-      onSelect(savedProvider)
+    // Check both keys for backward compatibility
+    const savedModel = localStorage.getItem("selectedModel") || localStorage.getItem("selectedProvider")
+    if (savedModel && availableProviders.includes(savedModel)) {
+      setValue(savedModel)
+      onSelect(savedModel)
     } else if (!availableProviders.includes(value)) {
       // If current value is not available, set to first available provider
       const firstAvailable = availableProviders[0]
@@ -56,6 +57,8 @@ export function ProviderSelector({
   const handleSelect = (currentValue: string) => {
     setValue(currentValue)
     onSelect(currentValue)
+    localStorage.setItem("selectedModel", currentValue)
+    // Also set the old key for backward compatibility
     localStorage.setItem("selectedProvider", currentValue)
   }
 

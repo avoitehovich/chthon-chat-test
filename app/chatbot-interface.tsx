@@ -670,7 +670,7 @@ export default function ChatbotInterface() {
             content: m.content,
             imageUrl: m.imageUrl,
           })),
-          provider: selectedProvider,
+          model: selectedProvider,
         }
 
         console.log("Sending request to chat API")
