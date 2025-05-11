@@ -7,20 +7,19 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 
 const allProviders = [
   {
-    value: "openai",
+    value: "openai/gpt-4o-mini",
     label: "OpenAI",
+    shortName: "OpenAI",
   },
   {
-    value: "deepseek",
-    label: "DeepSeek",
+    value: "google/gemini-1.5-flash",
+    label: "Google Gemini",
+    shortName: "Google",
   },
   {
-    value: "amazon",
-    label: "Amazon",
-  },
-  {
-    value: "xai",
-    label: "Grok",
+    value: "xai/grok-2-vision-latest",
+    label: "Grok (Premium)",
+    shortName: "Grok",
   },
 ]
 
@@ -32,8 +31,8 @@ interface ProviderSelectorProps {
 
 export function ProviderSelector({
   onSelect,
-  defaultValue = "openai",
-  availableProviders = ["openai", "deepseek", "amazon", "google", "xai"],
+  defaultValue = "openai/gpt-4o-mini",
+  availableProviders = ["openai/gpt-4o-mini", "google/gemini-1.5-flash"],
 }: ProviderSelectorProps) {
   const [value, setValue] = useState(defaultValue)
 
@@ -60,15 +59,21 @@ export function ProviderSelector({
     localStorage.setItem("selectedProvider", currentValue)
   }
 
+  // Get display name for the current value
+  const getDisplayName = (val: string) => {
+    const provider = allProviders.find((p) => p.value === val)
+    return provider ? provider.shortName : "OpenAI"
+  }
+
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <Button variant="outline" className="w-[110px] justify-between h-8 text-sm">
-          {value ? providers.find((provider) => provider.value === value)?.label || "OpenAI" : "OpenAI"}
+          {value ? getDisplayName(value) : "OpenAI"}
           <ChevronDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
         </Button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-[110px]">
+      <DropdownMenuContent align="end" className="w-[160px]">
         {providers.map((provider) => (
           <DropdownMenuItem key={provider.value} onClick={() => handleSelect(provider.value)}>
             <Check className={`mr-2 h-4 w-4 ${value === provider.value ? "opacity-100" : "opacity-0"}`} />

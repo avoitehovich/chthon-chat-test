@@ -147,9 +147,9 @@ export async function POST(req: Request) {
     const maxTokens = Math.min(
       userTierLimits.maxTokens,
       {
-        openai: 4000,
-        google: 4000,
-        grok: 4000,
+        "openai/gpt-4o-mini": 4000,
+        "google/gemini-1.5-flash": 4000,
+        "xai/grok-2-vision-latest": 4000,
       }[effectiveModel] || 4000,
     )
 
@@ -233,7 +233,7 @@ export async function POST(req: Request) {
           messages: formattedMessages,
           temperature: 0.7,
           max_tokens: maxTokens,
-          fallback_model: "openai", // Fallback to OpenAI if the selected model fails
+          fallback_model: "openai/gpt-4o-mini", // Fallback to OpenAI if the selected model fails
         }),
       })
 

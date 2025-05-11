@@ -814,7 +814,7 @@ export default function ChatbotInterface() {
               <h3 className="font-medium text-blue-900 dark:text-blue-100">Premium</h3>
               <ul className="mt-2 list-inside list-disc text-sm text-blue-800 dark:text-blue-200">
                 <li>All registered features</li>
-                <li>Access to XAI/Grok</li>
+                <li>Access to Grok AI</li>
                 <li>1500 tokens per message</li>
               </ul>
               <button

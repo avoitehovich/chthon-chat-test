@@ -21,20 +21,20 @@ export const tierLimits = {
     maxTokens: 1000,
     canSelectProvider: true,
     canUploadImages: true,
-    availableProviders: ["openai", "deepseek", "amazon", "google"],
+    availableProviders: ["openai/gpt-4o-mini", "google/gemini-1.5-flash"],
   },
   premium: {
     maxTokens: 1500,
     canSelectProvider: true,
     canUploadImages: true,
-    availableProviders: ["openai", "deepseek", "amazon", "google", "xai"],
+    availableProviders: ["openai/gpt-4o-mini", "google/gemini-1.5-flash", "xai/grok-2-vision-latest"],
   },
   // Custom tier will use the tierConfig from the user object
   custom: {
     maxTokens: 1000, // Default values, will be overridden by user's tierConfig
     canSelectProvider: true,
     canUploadImages: true,
-    availableProviders: ["openai", "deepseek", "amazon", "google"],
+    availableProviders: ["openai/gpt-4o-mini", "google/gemini-1.5-flash"],
   },
 }
 
