@@ -66,7 +66,7 @@ export async function POST(req: Request) {
 
       // Log a sample of the request body (first 100 chars) for debugging
       if (text.length > 0) {
-        console.log("[CHAT] Request body sample:", text.substring(0, Math.min(100, text.length)) + "...")
+        console.log("[CHAT] Request body:", text)
       }
 
       const body = JSON.parse(text)
