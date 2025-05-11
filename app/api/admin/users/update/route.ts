@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server"
-import { prisma } from "@/lib/db"
+import { getSupabaseServer } from "@/lib/supabase"
 import type { UserTier } from "@/types/user"
 
 export async function POST(req: Request) {
@@ -30,33 +30,38 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "No updates provided" }, { status: 400 })
     }
 
-    // Check if we're using database
-    const dbCheck = await prisma.user.count()
+    // Initialize Supabase client
+    const supabase = getSupabaseServer()
+
+    // Check if we're using Supabase
+    const { data: supabaseCheck } = await supabase.from("users").select("count").limit(1).single()
 
     let updatedCount = 0
 
-    if (dbCheck > 0) {
-      // Update users in database
+    if (supabaseCheck) {
+      // Update users in Supabase
       const { tier, ...customConfig } = updates
 
       // Prepare the update data
       const updateData: any = {
         tier,
-        updatedAt: new Date(),
+        updated_at: new Date().toISOString(),
       }
 
       // If this is a custom tier, store the configuration in a JSON field
       if (tier === "custom" && Object.keys(customConfig).length > 0) {
-        updateData.tierConfig = customConfig
+        updateData.tier_config = customConfig
       }
 
       // Update the users
-      const result = await prisma.user.updateMany({
-        where: { id: { in: userIds } },
-        data: updateData,
-      })
+      const { data, error } = await supabase.from("users").update(updateData).in("id", userIds).select("id")
 
-      updatedCount = result.count
+      if (error) {
+        console.error("Error updating users in Supabase:", error)
+        return NextResponse.json({ error: "Failed to update users" }, { status: 500 })
+      }
+
+      updatedCount = data?.length || 0
     } else {
       // Fall back to file-based storage
       const { getUserById, updateUser } = await import("@/utils/user-service")

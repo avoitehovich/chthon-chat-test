@@ -23,7 +23,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import { useSession, signIn, signOut } from "next-auth/react"
 import { tierLimits, type UserTier } from "@/types/user"
 import { useRouter } from "next/navigation"
-import { isDatabaseAvailable } from "@/lib/db"
+import { isSupabaseAvailable } from "@/lib/supabase"
 import {
   getUserChatSessions,
   getChatSessionMessages,
@@ -89,7 +89,7 @@ export default function ChatbotInterface() {
     const fetchUserTierConfig = async () => {
       if (status === "authenticated" && session?.user?.id && userTier === "custom") {
         try {
-          // Try to get user from database
+          // Try to get user from Supabase first
           const response = await fetch(`/api/user/config?userId=${session.user.id}`)
           if (response.ok) {
             const data = await response.json()
@@ -108,10 +108,10 @@ export default function ChatbotInterface() {
     fetchUserTierConfig()
   }, [userTier, status, session?.user?.id])
 
-  // Check if database is available
+  // Check if Supabase is available
   useEffect(() => {
     const checkDbAvailability = async () => {
-      const available = await isDatabaseAvailable()
+      const available = await isSupabaseAvailable()
       setIsDbAvailable(available)
     }
 

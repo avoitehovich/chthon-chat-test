@@ -1,5 +1,4 @@
-import { prisma } from "@/lib/db"
-import { isDatabaseAvailable } from "@/lib/db"
+import { getSupabaseServer, isSupabaseAvailable } from "@/lib/supabase"
 import fs from "fs/promises"
 import path from "path"
 import type { UserTier } from "@/types/user"
@@ -83,32 +82,39 @@ export async function saveAnalytics(data: AnalyticsData): Promise<void> {
       providerDetails: data.providerDetails ? Object.keys(data.providerDetails) : undefined,
     })
 
-    // Try to use Prisma first
-    const dbAvailable = await isDatabaseAvailable()
+    // Try to use Supabase first
+    const supabaseAvailable = await isSupabaseAvailable()
 
-    if (dbAvailable) {
-      // Convert to Prisma format
-      await prisma.analytics.create({
-        data: {
-          userId: data.userId !== "anonymous" ? data.userId : null,
-          provider: data.provider,
-          type: data.type,
-          timestamp: new Date(data.timestamp),
-          cost: data.cost,
-          tokens: data.tokens,
-          processingTime: data.processingTime,
-          success: data.success,
-          error: data.error,
-          userTier: data.userTier,
-          // Add new fields
-          providerDetails: data.providerDetails || null,
-          responseTime: data.responseTime || null,
-          requestSize: data.requestSize || null,
-          responseSize: data.responseSize || null,
-        },
-      })
+    if (supabaseAvailable) {
+      const supabase = getSupabaseServer()
 
-      console.log("[ANALYTICS] Successfully saved to database")
+      // Convert to Supabase format
+      const supabaseData = {
+        user_id: data.userId !== "anonymous" ? data.userId : null,
+        provider: data.provider,
+        type: data.type,
+        timestamp: data.timestamp,
+        cost: data.cost,
+        tokens: data.tokens,
+        processing_time: data.processingTime,
+        success: data.success,
+        error: data.error,
+        user_tier: data.userTier,
+        // Add new fields
+        provider_details: data.providerDetails || null,
+        response_time: data.responseTime || null,
+        request_size: data.requestSize || null,
+        response_size: data.responseSize || null,
+      }
+
+      const { error } = await supabase.from("analytics").insert(supabaseData)
+
+      if (error) {
+        console.error("[ANALYTICS] Error saving analytics to Supabase:", error)
+        throw error
+      }
+
+      console.log("[ANALYTICS] Successfully saved to Supabase")
       return
     }
 
@@ -140,31 +146,35 @@ export async function saveAnalytics(data: AnalyticsData): Promise<void> {
 // Get all analytics data
 export async function getAnalytics(): Promise<AnalyticsData[]> {
   try {
-    // Try to use Prisma first
-    const dbAvailable = await isDatabaseAvailable()
+    // Try to use Supabase first
+    const supabaseAvailable = await isSupabaseAvailable()
 
-    if (dbAvailable) {
-      const analyticsData = await prisma.analytics.findMany({
-        orderBy: { timestamp: "desc" },
-      })
+    if (supabaseAvailable) {
+      const supabase = getSupabaseServer()
+      const { data, error } = await supabase.from("analytics").select("*").order("timestamp", { ascending: false })
+
+      if (error) {
+        console.error("[ANALYTICS] Error fetching analytics from Supabase:", error)
+        throw error
+      }
 
       // Convert to app format
-      return analyticsData.map((item) => ({
+      return data.map((item) => ({
         provider: item.provider,
         type: item.type as "text" | "image",
-        timestamp: item.timestamp.toISOString(),
+        timestamp: item.timestamp,
         cost: item.cost,
         tokens: item.tokens,
-        processingTime: item.processingTime,
+        processingTime: item.processing_time,
         success: item.success,
         error: item.error,
-        userTier: item.userTier as UserTier,
-        userId: item.userId || "anonymous",
+        userTier: item.user_tier as UserTier,
+        userId: item.user_id || "anonymous",
         // Add new fields
-        providerDetails: item.providerDetails as any,
-        responseTime: item.responseTime || undefined,
-        requestSize: item.requestSize || undefined,
-        responseSize: item.responseSize || undefined,
+        providerDetails: item.provider_details,
+        responseTime: item.response_time,
+        requestSize: item.request_size,
+        responseSize: item.response_size,
       }))
     }
 
@@ -187,30 +197,46 @@ export async function getAnalytics(): Promise<AnalyticsData[]> {
 // Get analytics summary
 export async function getAnalyticsSummary() {
   try {
-    // Try to use Prisma first
-    const dbAvailable = await isDatabaseAvailable()
+    // Try to use Supabase first
+    const supabaseAvailable = await isSupabaseAvailable()
 
-    if (dbAvailable) {
+    if (supabaseAvailable) {
+      const supabase = getSupabaseServer()
+
       // Get total requests
-      const totalRequests = await prisma.analytics.count()
+      const { count: totalRequests, error: countError } = await supabase.from("analytics").count()
+
+      if (countError) {
+        console.error("[ANALYTICS] Error counting analytics from Supabase:", countError)
+        throw countError
+      }
 
       // Get successful requests
-      const successfulRequests = await prisma.analytics.count({
-        where: { success: true },
-      })
+      const { count: successfulRequests, error: successError } = await supabase
+        .from("analytics")
+        .count()
+        .eq("success", true)
+
+      if (successError) {
+        console.error("[ANALYTICS] Error counting successful analytics from Supabase:", successError)
+        throw successError
+      }
 
       // Get total cost and tokens
-      const totals = (await prisma.$queryRaw`
-        SELECT 
-          SUM(cost)::float as total_cost,
-          SUM(tokens)::int as total_tokens
-        FROM analytics
-      `) as any[]
+      const { data: totals, error: totalsError } = await supabase.rpc("get_analytics_totals")
+
+      if (totalsError) {
+        console.error("[ANALYTICS] Error getting analytics totals from Supabase:", totalsError)
+        throw totalsError
+      }
 
       // Get provider stats
-      const providerData = await prisma.analytics.findMany({
-        select: { provider: true, success: true },
-      })
+      const { data: providerData, error: providerError } = await supabase.from("analytics").select("provider, success")
+
+      if (providerError) {
+        console.error("[ANALYTICS] Error getting provider stats from Supabase:", providerError)
+        throw providerError
+      }
 
       // Calculate provider stats
       const providerStats = providerData.reduce(
@@ -232,14 +258,12 @@ export async function getAnalyticsSummary() {
       )
 
       // Get provider totals
-      const providerTotals = (await prisma.$queryRaw`
-        SELECT 
-          provider,
-          SUM(cost)::float as total_cost,
-          SUM(tokens)::int as total_tokens
-        FROM analytics
-        GROUP BY provider
-      `) as any[]
+      const { data: providerTotals, error: providerTotalsError } = await supabase.rpc("get_provider_totals")
+
+      if (providerTotalsError) {
+        console.error("[ANALYTICS] Error getting provider totals from Supabase:", providerTotalsError)
+        throw providerTotalsError
+      }
 
       // Update provider stats with totals
       for (const provider of providerTotals) {
@@ -258,15 +282,12 @@ export async function getAnalyticsSummary() {
       }
 
       // Get type stats
-      const typeData = (await prisma.$queryRaw`
-        SELECT 
-          type,
-          COUNT(*)::int as count,
-          SUM(cost)::float as total_cost,
-          SUM(tokens)::int as total_tokens
-        FROM analytics
-        GROUP BY type
-      `) as any[]
+      const { data: typeData, error: typeError } = await supabase.rpc("get_type_totals")
+
+      if (typeError) {
+        console.error("[ANALYTICS] Error getting type stats from Supabase:", typeError)
+        throw typeError
+      }
 
       const typeStats = {
         text: {
@@ -290,15 +311,12 @@ export async function getAnalyticsSummary() {
       }
 
       // Get tier stats
-      const tierData = (await prisma.$queryRaw`
-        SELECT 
-          user_tier,
-          COUNT(*)::int as count,
-          SUM(cost)::float as total_cost,
-          SUM(tokens)::int as total_tokens
-        FROM analytics
-        GROUP BY user_tier
-      `) as any[]
+      const { data: tierData, error: tierError } = await supabase.rpc("get_tier_totals")
+
+      if (tierError) {
+        console.error("[ANALYTICS] Error getting tier stats from Supabase:", tierError)
+        throw tierError
+      }
 
       const tierStats = tierData.reduce(
         (acc, item) => {
@@ -314,16 +332,12 @@ export async function getAnalyticsSummary() {
       )
 
       // Get daily usage
-      const dailyData = (await prisma.$queryRaw`
-        SELECT 
-          TO_CHAR(timestamp, 'YYYY-MM-DD') as date,
-          COUNT(*)::int as count,
-          SUM(cost)::float as total_cost,
-          SUM(tokens)::int as total_tokens
-        FROM analytics
-        GROUP BY TO_CHAR(timestamp, 'YYYY-MM-DD')
-        ORDER BY date DESC
-      `) as any[]
+      const { data: dailyData, error: dailyError } = await supabase.rpc("get_daily_usage")
+
+      if (dailyError) {
+        console.error("[ANALYTICS] Error getting daily usage from Supabase:", dailyError)
+        throw dailyError
+      }
 
       const dailyUsage = dailyData.reduce(
         (acc, item) => {
@@ -339,37 +353,37 @@ export async function getAnalyticsSummary() {
       )
 
       // Get provider details summary
-      const analytics = await prisma.analytics.findMany({
-        where: {
-          providerDetails: { not: null },
-        },
-        select: { providerDetails: true },
-        take: 100,
-      })
+      const { data: analytics, error: analyticsError } = await supabase
+        .from("analytics")
+        .select("provider_details")
+        .not("provider_details", "is", null)
+        .limit(100)
 
       const providerDetailsSummary = {} as Record<string, { cost: number; tokens: number; requests: number }>
 
-      // Process provider details
-      for (const item of analytics) {
-        if (item.providerDetails) {
-          for (const [provider, details] of Object.entries(item.providerDetails as any)) {
-            if (!providerDetailsSummary[provider]) {
-              providerDetailsSummary[provider] = { cost: 0, tokens: 0, requests: 0 }
-            }
+      if (!analyticsError && analytics) {
+        // Process provider details
+        for (const item of analytics) {
+          if (item.provider_details) {
+            for (const [provider, details] of Object.entries(item.provider_details)) {
+              if (!providerDetailsSummary[provider]) {
+                providerDetailsSummary[provider] = { cost: 0, tokens: 0, requests: 0 }
+              }
 
-            providerDetailsSummary[provider].requests++
+              providerDetailsSummary[provider].requests++
 
-            if (typeof details === "object") {
-              providerDetailsSummary[provider].cost += (details as any).cost || 0
-              providerDetailsSummary[provider].tokens += (details as any).tokens || 0
+              if (typeof details === "object") {
+                providerDetailsSummary[provider].cost += (details as any).cost || 0
+                providerDetailsSummary[provider].tokens += (details as any).tokens || 0
+              }
             }
           }
         }
       }
 
       return {
-        totalCost: totals[0]?.total_cost || 0,
-        totalTokens: totals[0]?.total_tokens || 0,
+        totalCost: totals.total_cost || 0,
+        totalTokens: totals.total_tokens || 0,
         totalRequests: totalRequests || 0,
         successfulRequests: successfulRequests || 0,
         failedRequests: (totalRequests || 0) - (successfulRequests || 0),

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server"
-import { prisma } from "@/lib/db"
+import { getSupabaseServer } from "@/lib/supabase"
 import { getServerSession } from "next-auth"
 import { authOptions } from "../../auth/[...nextauth]/route"
 
@@ -17,16 +17,16 @@ export async function GET(req: Request) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
 
-    // Try to get user from database
-    const userData = await prisma.user.findUnique({
-      where: { id: userId },
-      select: { tier: true, tierConfig: true },
-    })
+    // Initialize Supabase client
+    const supabase = getSupabaseServer()
 
-    if (userData) {
+    // Try to get user from Supabase
+    const { data: userData, error } = await supabase.from("users").select("tier, tier_config").eq("id", userId).single()
+
+    if (!error && userData) {
       return NextResponse.json({
         tier: userData.tier,
-        tierConfig: userData.tierConfig || null,
+        tierConfig: userData.tier_config || null,
       })
     }
 

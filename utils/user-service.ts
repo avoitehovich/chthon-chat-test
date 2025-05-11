@@ -1,8 +1,7 @@
-import { prisma, isDatabaseAvailable } from "@/lib/db"
+import { getSupabaseServer, isSupabaseAvailable } from "@/lib/supabase"
 import fs from "fs/promises"
 import path from "path"
 import type { User, UserTier } from "@/types/user"
-import crypto from "crypto"
 
 // Change the USERS_FILE path to use the /tmp directory in production
 const USERS_FILE =
@@ -35,17 +34,17 @@ async function ensureDataDir() {
   }
 }
 
-// Convert Prisma User to our User type
-function convertPrismaUser(prismaUser: any): User {
+// Update the convertSupabaseUser function to use snake_case column names
+function convertSupabaseUser(supabaseUser: any): User {
   return {
-    id: prismaUser.id,
-    email: prismaUser.email || "",
-    name: prismaUser.name || "",
-    image: prismaUser.image,
-    tier: (prismaUser.tier as UserTier) || "free",
-    tierConfig: prismaUser.tierConfig || undefined,
-    createdAt: prismaUser.createdAt?.toISOString() || new Date().toISOString(),
-    updatedAt: prismaUser.updatedAt?.toISOString() || new Date().toISOString(),
+    id: supabaseUser.id, // This will now be a UUID
+    email: supabaseUser.email,
+    name: supabaseUser.name || "",
+    image: supabaseUser.image,
+    tier: supabaseUser.tier as UserTier,
+    tierConfig: supabaseUser.tier_config || undefined,
+    createdAt: supabaseUser.created_at,
+    updatedAt: supabaseUser.updated_at,
   }
 }
 
@@ -53,19 +52,21 @@ function convertPrismaUser(prismaUser: any): User {
 export async function getAllUsers(): Promise<User[]> {
   try {
     console.log("[USER-SERVICE] Getting all users")
-    // Try to use Prisma first
-    const dbAvailable = await isDatabaseAvailable()
+    // Try to use Supabase first
+    const supabaseAvailable = await isSupabaseAvailable()
 
-    if (dbAvailable) {
-      console.log("[USER-SERVICE] Using Prisma to get users")
-      try {
-        const users = await prisma.user.findMany()
-        console.log("[USER-SERVICE] Retrieved", users.length, "users from database")
-        return users.map(convertPrismaUser)
-      } catch (dbError) {
-        console.error("[USER-SERVICE] Error querying users from database:", dbError)
-        // Fall back to file-based storage
+    if (supabaseAvailable) {
+      console.log("[USER-SERVICE] Using Supabase to get users")
+      const supabase = getSupabaseServer()
+      const { data: users, error } = await supabase.from("users").select("*").order("created_at", { ascending: false })
+
+      if (error) {
+        console.error("[USER-SERVICE] Error fetching users from Supabase:", error)
+        throw error
       }
+
+      console.log("[USER-SERVICE] Retrieved", users.length, "users from Supabase")
+      return users.map(convertSupabaseUser)
     }
 
     // Fall back to file-based storage
@@ -79,7 +80,7 @@ export async function getAllUsers(): Promise<User[]> {
       console.log("[USER-SERVICE] Retrieved", users.length, "users from file")
       return users
     } catch (error) {
-      if ((error as any).code === "ENOENT") {
+      if (error.code === "ENOENT") {
         console.log("[USER-SERVICE] Users file doesn't exist, returning empty array")
         return []
       }
@@ -97,27 +98,26 @@ export async function getAllUsers(): Promise<User[]> {
 export async function getUserByEmail(email: string): Promise<User | null> {
   try {
     console.log("[USER-SERVICE] Getting user by email:", email)
-    // Try to use Prisma first
-    const dbAvailable = await isDatabaseAvailable()
+    // Try to use Supabase first
+    const supabaseAvailable = await isSupabaseAvailable()
 
-    if (dbAvailable) {
-      console.log("[USER-SERVICE] Using Prisma to get user by email")
-      try {
-        const user = await prisma.user.findUnique({
-          where: { email },
-        })
+    if (supabaseAvailable) {
+      console.log("[USER-SERVICE] Using Supabase to get user by email")
+      const supabase = getSupabaseServer()
+      const { data: user, error } = await supabase.from("users").select("*").eq("email", email).single()
 
-        if (!user) {
+      if (error) {
+        if (error.code === "PGRST116") {
           console.log("[USER-SERVICE] No user found with email:", email)
+          // No rows returned
           return null
         }
-
-        console.log("[USER-SERVICE] User found in database")
-        return convertPrismaUser(user)
-      } catch (dbError) {
-        console.error("[USER-SERVICE] Error querying user by email from database:", dbError)
-        // Fall back to file-based storage
+        console.error("[USER-SERVICE] Error fetching user by email from Supabase:", error)
+        throw error
       }
+
+      console.log("[USER-SERVICE] User found in Supabase")
+      return convertSupabaseUser(user)
     }
 
     // Fall back to file-based storage
@@ -136,27 +136,26 @@ export async function getUserByEmail(email: string): Promise<User | null> {
 export async function getUserById(id: string): Promise<User | null> {
   try {
     console.log("[USER-SERVICE] Getting user by id:", id)
-    // Try to use Prisma first
-    const dbAvailable = await isDatabaseAvailable()
+    // Try to use Supabase first
+    const supabaseAvailable = await isSupabaseAvailable()
 
-    if (dbAvailable) {
-      console.log("[USER-SERVICE] Using Prisma to get user by id")
-      try {
-        const user = await prisma.user.findUnique({
-          where: { id },
-        })
+    if (supabaseAvailable) {
+      console.log("[USER-SERVICE] Using Supabase to get user by id")
+      const supabase = getSupabaseServer()
+      const { data: user, error } = await supabase.from("users").select("*").eq("id", id).single()
 
-        if (!user) {
+      if (error) {
+        if (error.code === "PGRST116") {
           console.log("[USER-SERVICE] No user found with id:", id)
+          // No rows returned
           return null
         }
-
-        console.log("[USER-SERVICE] User found in database")
-        return convertPrismaUser(user)
-      } catch (dbError) {
-        console.error("[USER-SERVICE] Error querying user by id from database:", dbError)
-        // Fall back to file-based storage
+        console.error("[USER-SERVICE] Error fetching user by id from Supabase:", error)
+        throw error
       }
+
+      console.log("[USER-SERVICE] User found in Supabase")
+      return convertSupabaseUser(user)
     }
 
     // Fall back to file-based storage
@@ -171,46 +170,48 @@ export async function getUserById(id: string): Promise<User | null> {
   }
 }
 
-// Create a new user
+// Update the createUser function to handle UUID
 export async function createUser(user: User): Promise<void> {
   try {
     console.log("[USER-SERVICE] Creating user:", user.email)
-    // Try to use Prisma first
-    const dbAvailable = await isDatabaseAvailable()
+    // Try to use Supabase first
+    const supabaseAvailable = await isSupabaseAvailable()
 
-    if (dbAvailable) {
-      console.log("[USER-SERVICE] Using Prisma to create user")
-      try {
-        // Convert string ID to UUID if needed
-        let userId = user.id
-        if (
-          typeof userId === "string" &&
-          !userId.match(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i)
-        ) {
-          // Generate a UUID if the ID is not already in UUID format
-          userId = crypto.randomUUID()
-          console.log("[USER-SERVICE] Generated UUID for user:", userId)
-        }
+    if (supabaseAvailable) {
+      console.log("[USER-SERVICE] Using Supabase to create user")
+      const supabase = getSupabaseServer()
 
-        await prisma.user.create({
-          data: {
-            id: userId,
-            email: user.email,
-            name: user.name,
-            image: user.image,
-            tier: user.tier || "free",
-            tierConfig: user.tierConfig || null,
-            createdAt: new Date(user.createdAt),
-            updatedAt: new Date(user.updatedAt),
-          },
-        })
-
-        console.log("[USER-SERVICE] User created in database")
-        return
-      } catch (dbError) {
-        console.error("[USER-SERVICE] Error creating user in database:", dbError)
-        // Fall back to file-based storage
+      // Convert string ID to UUID if needed
+      let userId = user.id
+      if (
+        typeof userId === "string" &&
+        !userId.match(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i)
+      ) {
+        // Generate a UUID if the ID is not already in UUID format
+        userId = crypto.randomUUID()
+        console.log("[USER-SERVICE] Generated UUID for user:", userId)
       }
+
+      const supabaseUser = {
+        id: userId,
+        email: user.email,
+        name: user.name,
+        image: user.image,
+        tier: user.tier,
+        tier_config: user.tierConfig || null,
+        created_at: user.createdAt,
+        updated_at: user.updatedAt,
+      }
+
+      const { error } = await supabase.from("users").insert(supabaseUser)
+
+      if (error) {
+        console.error("[USER-SERVICE] Error creating user in Supabase:", error)
+        throw error
+      }
+
+      console.log("[USER-SERVICE] User created in Supabase")
+      return
     }
 
     // Fall back to file-based storage
@@ -229,32 +230,31 @@ export async function createUser(user: User): Promise<void> {
 export async function updateUser(id: string, updates: Partial<User>): Promise<void> {
   try {
     console.log("[USER-SERVICE] Updating user:", id)
-    // Try to use Prisma first
-    const dbAvailable = await isDatabaseAvailable()
+    // Try to use Supabase first
+    const supabaseAvailable = await isSupabaseAvailable()
 
-    if (dbAvailable) {
-      console.log("[USER-SERVICE] Using Prisma to update user")
-      try {
-        const updateData: any = {}
-        if (updates.name !== undefined) updateData.name = updates.name
-        if (updates.email !== undefined) updateData.email = updates.email
-        if (updates.image !== undefined) updateData.image = updates.image
-        if (updates.tier !== undefined) updateData.tier = updates.tier
-        if (updates.tierConfig !== undefined) updateData.tierConfig = updates.tierConfig
-        if (updates.updatedAt !== undefined) updateData.updatedAt = new Date(updates.updatedAt)
-        else updateData.updatedAt = new Date()
+    if (supabaseAvailable) {
+      console.log("[USER-SERVICE] Using Supabase to update user")
+      const supabase = getSupabaseServer()
 
-        await prisma.user.update({
-          where: { id },
-          data: updateData,
-        })
+      // Convert camelCase to snake_case for Supabase
+      const supabaseUpdates: any = {}
+      if (updates.name !== undefined) supabaseUpdates.name = updates.name
+      if (updates.email !== undefined) supabaseUpdates.email = updates.email
+      if (updates.image !== undefined) supabaseUpdates.image = updates.image
+      if (updates.tier !== undefined) supabaseUpdates.tier = updates.tier
+      if (updates.tierConfig !== undefined) supabaseUpdates.tier_config = updates.tierConfig
+      if (updates.updatedAt !== undefined) supabaseUpdates.updated_at = updates.updatedAt
 
-        console.log("[USER-SERVICE] User updated in database")
-        return
-      } catch (dbError) {
-        console.error("[USER-SERVICE] Error updating user in database:", dbError)
-        // Fall back to file-based storage
+      const { error } = await supabase.from("users").update(supabaseUpdates).eq("id", id)
+
+      if (error) {
+        console.error("[USER-SERVICE] Error updating user in Supabase:", error)
+        throw error
       }
+
+      console.log("[USER-SERVICE] User updated in Supabase")
+      return
     }
 
     // Fall back to file-based storage

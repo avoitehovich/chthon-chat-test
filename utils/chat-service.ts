@@ -1,29 +1,35 @@
-import { prisma } from "@/lib/db"
-import { isDatabaseAvailable } from "@/lib/db"
+import { getSupabaseServer, isSupabaseAvailable } from "@/lib/supabase"
 import type { Message } from "@/types/chat"
 
 // Get all chat sessions for a user
 export async function getUserChatSessions(userId: string) {
   try {
-    // Try to use Prisma first
-    const dbAvailable = await isDatabaseAvailable()
+    // Try to use Supabase first
+    const supabaseAvailable = await isSupabaseAvailable()
 
-    if (dbAvailable) {
-      const sessions = await prisma.chatSession.findMany({
-        where: { userId },
-        orderBy: { lastUpdated: "desc" },
-      })
+    if (supabaseAvailable) {
+      const supabase = getSupabaseServer()
+      const { data, error } = await supabase
+        .from("chat_sessions")
+        .select("*")
+        .eq("user_id", userId)
+        .order("last_updated", { ascending: false })
 
-      return sessions.map((session) => ({
+      if (error) {
+        console.error("Error fetching chat sessions from Supabase:", error)
+        throw error
+      }
+
+      return data.map((session) => ({
         id: session.id,
         name: session.name,
         messages: [],
-        lastUpdated: session.lastUpdated.getTime(),
-        userId: session.userId,
+        lastUpdated: new Date(session.last_updated).getTime(),
+        userId: session.user_id,
       }))
     }
 
-    // If database is not available, return empty array
+    // If Supabase is not available, return empty array
     // We don't have a file-based fallback for chat sessions
     return []
   } catch (error) {
@@ -35,25 +41,32 @@ export async function getUserChatSessions(userId: string) {
 // Get messages for a chat session
 export async function getChatSessionMessages(sessionId: string) {
   try {
-    // Try to use Prisma first
-    const dbAvailable = await isDatabaseAvailable()
+    // Try to use Supabase first
+    const supabaseAvailable = await isSupabaseAvailable()
 
-    if (dbAvailable) {
-      const messages = await prisma.message.findMany({
-        where: { sessionId },
-        orderBy: { timestamp: "asc" },
-      })
+    if (supabaseAvailable) {
+      const supabase = getSupabaseServer()
+      const { data, error } = await supabase
+        .from("messages")
+        .select("*")
+        .eq("session_id", sessionId)
+        .order("timestamp", { ascending: true })
 
-      return messages.map((message) => ({
+      if (error) {
+        console.error("Error fetching messages from Supabase:", error)
+        throw error
+      }
+
+      return data.map((message) => ({
         id: message.id,
         role: message.role as "user" | "assistant",
         content: message.content,
-        timestamp: message.timestamp.getTime(),
-        imageUrl: message.imageUrl || undefined,
+        timestamp: new Date(message.timestamp).getTime(),
+        imageUrl: message.image_url || undefined,
       }))
     }
 
-    // If database is not available, return empty array
+    // If Supabase is not available, return empty array
     return []
   } catch (error) {
     console.error(`Error getting messages for session ${sessionId}:`, error)
@@ -64,32 +77,39 @@ export async function getChatSessionMessages(sessionId: string) {
 // Create a new chat session
 export async function createChatSession(userId: string, name: string) {
   try {
-    // Try to use Prisma first
-    const dbAvailable = await isDatabaseAvailable()
+    // Try to use Supabase first
+    const supabaseAvailable = await isSupabaseAvailable()
 
-    if (dbAvailable) {
+    if (supabaseAvailable) {
+      const supabase = getSupabaseServer()
       const sessionId = Date.now().toString()
 
-      const session = await prisma.chatSession.create({
-        data: {
+      const { data, error } = await supabase
+        .from("chat_sessions")
+        .insert({
           id: sessionId,
-          userId,
+          user_id: userId,
           name,
-          lastUpdated: new Date(),
-          createdAt: new Date(),
-        },
-      })
+          last_updated: new Date().toISOString(),
+        })
+        .select()
+        .single()
+
+      if (error) {
+        console.error("Error creating chat session in Supabase:", error)
+        throw error
+      }
 
       return {
-        id: session.id,
-        name: session.name,
+        id: data.id,
+        name: data.name,
         messages: [],
-        lastUpdated: session.lastUpdated.getTime(),
-        userId: session.userId,
+        lastUpdated: new Date(data.last_updated).getTime(),
+        userId: data.user_id,
       }
     }
 
-    // If database is not available, throw error
+    // If Supabase is not available, throw error
     throw new Error("Database not available")
   } catch (error) {
     console.error(`Error creating chat session for user ${userId}:`, error)
@@ -100,32 +120,42 @@ export async function createChatSession(userId: string, name: string) {
 // Add a message to a chat session
 export async function addMessageToChatSession(sessionId: string, message: Message): Promise<Message> {
   try {
-    // Try to use Prisma first
-    const dbAvailable = await isDatabaseAvailable()
+    // Try to use Supabase first
+    const supabaseAvailable = await isSupabaseAvailable()
 
-    if (dbAvailable) {
-      // Add message
-      await prisma.message.create({
-        data: {
-          id: message.id,
-          sessionId,
-          role: message.role,
-          content: message.content,
-          imageUrl: message.imageUrl,
-          timestamp: new Date(message.timestamp),
-        },
+    if (supabaseAvailable) {
+      const supabase = getSupabaseServer()
+
+      // Add message with snake_case column names
+      const { error: messageError } = await supabase.from("messages").insert({
+        id: message.id,
+        session_id: sessionId,
+        role: message.role,
+        content: message.content,
+        image_url: message.imageUrl,
+        timestamp: new Date(message.timestamp).toISOString(),
       })
+
+      if (messageError) {
+        console.error("Error adding message to Supabase:", messageError)
+        throw messageError
+      }
 
       // Update session last_updated
-      await prisma.chatSession.update({
-        where: { id: sessionId },
-        data: { lastUpdated: new Date() },
-      })
+      const { error: sessionError } = await supabase
+        .from("chat_sessions")
+        .update({ last_updated: new Date().toISOString() })
+        .eq("id", sessionId)
+
+      if (sessionError) {
+        console.error("Error updating chat session in Supabase:", sessionError)
+        throw sessionError
+      }
 
       return message
     }
 
-    // If database is not available, throw error
+    // If Supabase is not available, throw error
     throw new Error("Database not available")
   } catch (error) {
     console.error(`Error adding message to session ${sessionId}:`, error)
@@ -136,19 +166,24 @@ export async function addMessageToChatSession(sessionId: string, message: Messag
 // Delete a chat session
 export async function deleteChatSession(sessionId: string) {
   try {
-    // Try to use Prisma first
-    const dbAvailable = await isDatabaseAvailable()
+    // Try to use Supabase first
+    const supabaseAvailable = await isSupabaseAvailable()
 
-    if (dbAvailable) {
+    if (supabaseAvailable) {
+      const supabase = getSupabaseServer()
+
       // Delete session (messages will be deleted via cascade)
-      await prisma.chatSession.delete({
-        where: { id: sessionId },
-      })
+      const { error } = await supabase.from("chat_sessions").delete().eq("id", sessionId)
+
+      if (error) {
+        console.error("Error deleting chat session from Supabase:", error)
+        throw error
+      }
 
       return true
     }
 
-    // If database is not available, throw error
+    // If Supabase is not available, throw error
     throw new Error("Database not available")
   } catch (error) {
     console.error(`Error deleting chat session ${sessionId}:`, error)

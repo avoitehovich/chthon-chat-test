@@ -16,7 +16,6 @@ export default function AdminDashboard() {
   const [adminKey, setAdminKey] = useState("")
   const [authError, setAuthError] = useState<string | null>(null)
   const [isInitializing, setIsInitializing] = useState(false)
-  const [isMigrating, setIsMigrating] = useState(false)
 
   const authenticate = async () => {
     setAuthError(null)
@@ -78,11 +77,11 @@ export default function AdminDashboard() {
     }
   }
 
-  const migrateFromSupabase = async () => {
-    setIsMigrating(true)
+  const initializeSupabase = async () => {
+    setIsInitializing(true)
 
     try {
-      const response = await fetch("/api/admin/migrate-from-supabase", {
+      const response = await fetch("/api/admin/init-db", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -93,25 +92,62 @@ export default function AdminDashboard() {
       if (response.ok) {
         const data = await response.json()
         toast({
-          title: "Migration Successful",
-          description: "Data has been successfully migrated from Supabase to Vercel Postgres.",
+          title: "Database Initialized",
+          description: "The database has been successfully initialized and data has been migrated.",
         })
       } else {
         const data = await response.json()
         toast({
-          title: "Migration Failed",
-          description: data.error || "Failed to migrate data from Supabase",
+          title: "Initialization Failed",
+          description: data.error || "Failed to initialize database",
           variant: "destructive",
         })
       }
     } catch (error) {
       toast({
-        title: "Migration Failed",
+        title: "Initialization Failed",
         description: "An unexpected error occurred",
         variant: "destructive",
       })
     } finally {
-      setIsMigrating(false)
+      setIsInitializing(false)
+    }
+  }
+
+  const updateSchema = async () => {
+    setIsInitializing(true)
+
+    try {
+      const response = await fetch("/api/admin/update-schema", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${adminKey}`,
+        },
+      })
+
+      if (response.ok) {
+        const data = await response.json()
+        toast({
+          title: "Schema Updated",
+          description: "The database schema has been successfully updated.",
+        })
+      } else {
+        const data = await response.json()
+        toast({
+          title: "Update Failed",
+          description: data.error || "Failed to update database schema",
+          variant: "destructive",
+        })
+      }
+    } catch (error) {
+      toast({
+        title: "Update Failed",
+        description: "An unexpected error occurred",
+        variant: "destructive",
+      })
+    } finally {
+      setIsInitializing(false)
     }
   }
 
@@ -235,7 +271,7 @@ export default function AdminDashboard() {
             </CardHeader>
             <CardContent>
               <p className="text-sm text-gray-500 dark:text-gray-400">
-                Initialize the Vercel Postgres database tables required for the application.
+                Initialize the Supabase database tables required for the application.
               </p>
             </CardContent>
             <CardFooter>
@@ -259,18 +295,18 @@ export default function AdminDashboard() {
             <CardHeader>
               <CardTitle className="flex items-center">
                 <Database className="mr-2 h-5 w-5 text-orange-600" />
-                Migrate from Supabase
+                Migrate Data
               </CardTitle>
-              <CardDescription>Migrate data from Supabase to Vercel Postgres</CardDescription>
+              <CardDescription>Migrate data to Supabase</CardDescription>
             </CardHeader>
             <CardContent>
               <p className="text-sm text-gray-500 dark:text-gray-400">
-                Migrate data from Supabase to Vercel Postgres database.
+                Migrate data from file-based storage to Supabase database.
               </p>
             </CardContent>
             <CardFooter>
-              <Button onClick={migrateFromSupabase} className="w-full" variant="outline" disabled={isMigrating}>
-                {isMigrating ? (
+              <Button onClick={initializeSupabase} className="w-full" variant="outline" disabled={isInitializing}>
+                {isInitializing ? (
                   <>
                     <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
                     Migrating...
@@ -278,7 +314,37 @@ export default function AdminDashboard() {
                 ) : (
                   <>
                     <Database className="mr-2 h-4 w-4" />
-                    Migrate from Supabase
+                    Migrate Data
+                  </>
+                )}
+              </Button>
+            </CardFooter>
+          </Card>
+
+          <Card className="hover:shadow-md transition-shadow">
+            <CardHeader>
+              <CardTitle className="flex items-center">
+                <Database className="mr-2 h-5 w-5 text-purple-600" />
+                Update Schema
+              </CardTitle>
+              <CardDescription>Update database schema with new fields</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <p className="text-sm text-gray-500 dark:text-gray-400">
+                Update the database schema to add new fields for detailed analytics tracking.
+              </p>
+            </CardContent>
+            <CardFooter>
+              <Button onClick={updateSchema} className="w-full" variant="outline" disabled={isInitializing}>
+                {isInitializing ? (
+                  <>
+                    <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
+                    Updating...
+                  </>
+                ) : (
+                  <>
+                    <Database className="mr-2 h-4 w-4" />
+                    Update Schema
                   </>
                 )}
               </Button>
