@@ -52,8 +52,9 @@ interface AnalyticsSummary {
 
 const COLORS = ["#0088FE", "#00C49F", "#FFBB28", "#FF8042", "#8884d8", "#82ca9d"]
 
-// Update the ProviderDetailsCard component to include more detailed information
-// Replace the existing ProviderDetailsCard component with this enhanced version:
+// Update the ProviderDetailsCard component to ensure it's correctly displaying data
+
+// Find the ProviderDetailsCard component (around line 70-130) and update it to:
 
 const ProviderDetailsCard = ({ providerDetailsSummary }) => {
   if (!providerDetailsSummary || Object.keys(providerDetailsSummary).length === 0) {
@@ -64,6 +65,8 @@ const ProviderDetailsCard = ({ providerDetailsSummary }) => {
       </div>
     )
   }
+
+  console.log("Provider details summary:", providerDetailsSummary)
 
   return (
     <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6 mb-8">
@@ -120,7 +123,7 @@ const ProviderDetailsCard = ({ providerDetailsSummary }) => {
                   {details.requests}
                 </td>
                 <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
-                  ${details.cost.toFixed(4)}
+                  ${details.cost.toFixed(6)}
                 </td>
                 <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
                   {details.tokens.toLocaleString()}
@@ -194,14 +197,21 @@ const PerformanceMetricsCard = ({ analytics }) => {
 // Add a new component to display detailed token usage
 // Add this after the PerformanceMetricsCard component (around line 100)
 
-// Add this component to display detailed token usage
+// Also update the TokenUsageDetailsCard component to better extract token data:
+
 const TokenUsageDetailsCard = ({ analytics }) => {
   // Extract token usage data from provider details
   const tokenData = analytics
     .filter(
       (item) =>
         item.providerDetails &&
-        Object.values(item.providerDetails).some((details) => details.promptTokens || details.completionTokens),
+        Object.values(item.providerDetails).some(
+          (details) =>
+            details.promptTokens !== undefined ||
+            details.completionTokens !== undefined ||
+            details.totalTokens !== undefined ||
+            details.tokens !== undefined,
+        ),
     )
     .slice(0, 20) // Take the 20 most recent entries with token data
 
@@ -213,6 +223,8 @@ const TokenUsageDetailsCard = ({ analytics }) => {
       </div>
     )
   }
+
+  console.log("Token data:", tokenData)
 
   return (
     <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6 mb-8">
@@ -280,7 +292,10 @@ const TokenUsageDetailsCard = ({ analytics }) => {
                     {details.completionTokens || 0}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
-                    {details.totalTokens || (details.promptTokens || 0) + (details.completionTokens || 0)}
+                    {details.totalTokens ||
+                      (details.promptTokens || 0) + (details.completionTokens || 0) ||
+                      details.tokens ||
+                      0}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
                     ${details.cost.toFixed(6)}

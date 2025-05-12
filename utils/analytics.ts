@@ -406,11 +406,11 @@ export async function getAnalyticsSummary() {
     const analytics = await getAnalytics()
 
     // Calculate totals
-    const totalCost = analytics.reduce((sum, item) => sum + item.cost, 0)
-    const totalTokens = analytics.reduce((sum, item) => sum + item.tokens, 0)
-    const totalRequests = analytics.length
-    const successfulRequests = analytics.filter((item) => item.success).length
-    const failedRequests = totalRequests - successfulRequests
+    let totalCost = analytics.reduce((sum, item) => sum + item.cost, 0)
+    let totalTokens = analytics.reduce((sum, item) => sum + item.tokens, 0)
+    let totalRequests = analytics.length
+    let successfulRequests = analytics.filter((item) => item.success).length
+    let failedRequests = totalRequests - successfulRequests
 
     // Group by provider
     const providerStats = analytics.reduce(
@@ -499,8 +499,15 @@ export async function getAnalyticsSummary() {
     // Process provider details
     const providerDetailsSummary = {} as Record<string, { cost: number; tokens: number; requests: number }>
 
+    // Also update the main analytics totals based on provider details
+    let detailsTotalCost = 0
+    let detailsTotalTokens = 0
+    let detailsTotalRequests = 0
+
     for (const item of analytics) {
-      if (item.providerDetails) {
+      if (item.providerDetails && Object.keys(item.providerDetails).length > 0) {
+        detailsTotalRequests++
+
         for (const [provider, details] of Object.entries(item.providerDetails)) {
           if (!providerDetailsSummary[provider]) {
             providerDetailsSummary[provider] = { cost: 0, tokens: 0, requests: 0 }
@@ -509,11 +516,55 @@ export async function getAnalyticsSummary() {
           providerDetailsSummary[provider].requests++
 
           if (typeof details === "object") {
-            providerDetailsSummary[provider].cost += (details as any).cost || 0
-            providerDetailsSummary[provider].tokens += (details as any).tokens || 0
+            const detailCost = (details as any).cost || 0
+            const detailTokens =
+              (details as any).totalTokens ||
+              ((details as any).promptTokens || 0) + ((details as any).completionTokens || 0) ||
+              (details as any).tokens ||
+              0
+
+            providerDetailsSummary[provider].cost += detailCost
+            providerDetailsSummary[provider].tokens += detailTokens
+
+            detailsTotalCost += detailCost
+            detailsTotalTokens += detailTokens
           }
         }
       }
+    }
+
+    // If we have provider details but the main totals are zero, use the details totals
+    if (detailsTotalRequests > 0 && totalRequests === 0) {
+      totalRequests = detailsTotalRequests
+      successfulRequests = detailsTotalRequests // Assume successful if we have details
+      failedRequests = 0
+    }
+
+    if (detailsTotalCost > 0 && totalCost === 0) {
+      totalCost = detailsTotalCost
+    }
+
+    if (detailsTotalTokens > 0 && totalTokens === 0) {
+      totalTokens = detailsTotalTokens
+    }
+
+    // Update provider stats with data from provider details if needed
+    if (Object.keys(providerDetailsSummary).length > 0 && Object.keys(providerStats).length === 0) {
+      for (const [provider, details] of Object.entries(providerDetailsSummary)) {
+        providerStats[provider] = {
+          requests: details.requests,
+          cost: details.cost,
+          tokens: details.tokens,
+          successRate: 100, // Assume 100% success rate if we have details
+        }
+      }
+    }
+
+    // Update type stats if needed
+    if (typeStats.text.requests === 0 && typeStats.image.requests === 0 && detailsTotalRequests > 0) {
+      typeStats.text.requests = detailsTotalRequests
+      typeStats.text.cost = detailsTotalCost
+      typeStats.text.tokens = detailsTotalTokens
     }
 
     return {
