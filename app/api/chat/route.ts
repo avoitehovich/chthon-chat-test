@@ -287,11 +287,11 @@ export async function POST(req: Request) {
         // First get the raw text
         responseText = await chatResponse.text()
         console.log("[CHAT] Eden AI chat response text length:", responseText.length)
-
+console.log("[CHAT] Eden AI chat response:", responseText)
         // Then parse as JSON
         try {
           chatData = JSON.parse(responseText)
-          console.log("[CHAT] Eden AI chat response parsed successfully")
+          console.log("[CHAT] Eden AI chat response parsed successfully: ", chatData)
         } catch (jsonError) {
           console.error("[CHAT] Error parsing chat API JSON response:", jsonError)
           console.error(
