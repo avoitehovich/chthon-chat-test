@@ -291,7 +291,7 @@ export async function POST(req: Request) {
         // Then parse as JSON
         try {
           chatData = JSON.parse(responseText)
-
+          console.log("[CHAT] Eden AI chat response parsed successfully")
         } catch (jsonError) {
           console.error("[CHAT] Error parsing chat API JSON response:", jsonError)
           console.error(
